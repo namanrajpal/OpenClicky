@@ -73,9 +73,6 @@ struct CompanionPanelView: View {
             if companionManager.hasCompletedOnboarding && companionManager.allPermissionsGranted {
                 Spacer()
                     .frame(height: 16)
-
-                upstreamCreditButton
-                    .padding(.horizontal, 16)
             }
 
             Spacer()
@@ -682,43 +679,6 @@ struct CompanionPanelView: View {
         .pointerCursor()
     }
 
-    // MARK: - Upstream Credit
-
-    /// OpenClicky is a fork of farzaa/clicky (MIT). Credit where due.
-    private var upstreamCreditButton: some View {
-        Button(action: {
-            if let url = URL(string: "https://github.com/farzaa/clicky") {
-                NSWorkspace.shared.open(url)
-            }
-        }) {
-            HStack(spacing: 8) {
-                Image(systemName: "bubble.left.fill")
-                    .font(.system(size: 12, weight: .medium))
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Based on Clicky by Farza (MIT)")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Bugs, ideas, anything — I read every message.")
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.Colors.textTertiary)
-                }
-            }
-            .foregroundColor(DS.Colors.textSecondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
-                    .fill(DS.Colors.textPrimary.opacity(0.05))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
-                    .stroke(DS.Colors.borderSubtle, lineWidth: 0.5)
-            )
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-    }
 
     // MARK: - Footer
 

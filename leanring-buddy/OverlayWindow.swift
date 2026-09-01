@@ -70,6 +70,52 @@ struct Triangle: Shape {
     }
 }
 
+// Hand-drawn "pen" circle: an open, imperfect ring like someone circling
+// something with a marker. The path is a polyline around an ellipse-ish
+// loop with layered sine wobble on the radius, starting at a seeded random
+// angle and stopping short of a full turn (open gap). Because the path is
+// built from many small segments, .trim(from:to:) animates it as if the
+// stroke were being drawn in real time.
+struct PenCircleShape: Shape {
+    /// 0..<1 — varies the start angle, wobble phases, and squish so no two
+    /// circles look identical.
+    let seed: Double
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let baseRadius = min(rect.width, rect.height) / 2.0 - 4.0
+
+        let startAngle = seed * 2.0 * .pi
+        // Stop at ~93% of a full turn so the circle stays open, hand-drawn.
+        let sweep = 2.0 * .pi * 0.93
+        let segments = 120
+
+        for segmentIndex in 0...segments {
+            let t = Double(segmentIndex) / Double(segments)
+            let angle = startAngle + t * sweep
+
+            // Two sine harmonics give organic radius noise; the squish term
+            // makes the loop slightly elliptical with a seeded orientation.
+            let wobble = sin(angle * 3.0 + seed * 17.0) * 1.8
+                       + sin(angle * 5.0 + seed * 29.0) * 1.1
+            let squish = 1.0 + 0.06 * sin(angle * 2.0 + seed * 11.0)
+            let radius = (baseRadius + wobble) * squish
+
+            let point = CGPoint(
+                x: center.x + cos(angle) * radius,
+                y: center.y + sin(angle) * radius
+            )
+            if segmentIndex == 0 {
+                path.move(to: point)
+            } else {
+                path.addLine(to: point)
+            }
+        }
+        return path
+    }
+}
+
 // PreferenceKey for tracking bubble size
 struct SizePreferenceKey: PreferenceKey {
     static var defaultValue: CGSize = .zero
@@ -164,6 +210,23 @@ struct BlueCursorView: View {
     /// True when the buddy is flying BACK to the cursor after pointing.
     /// Only during the return flight can cursor movement cancel the animation.
     @State private var isReturningToCursor: Bool = false
+
+    // MARK: - Pen Circle State
+
+    /// Center of the hand-drawn highlight circle, in this screen's SwiftUI
+    /// coordinates. Set to the un-offset element location when navigation
+    /// starts; nil when no circle is on screen.
+    @State private var penCircleCenter: CGPoint?
+
+    /// Draw progress of the pen circle stroke, 0 → 1. Animating this drives
+    /// the .trim, which makes the circle appear to be drawn by a pen.
+    @State private var penCircleProgress: CGFloat = 0.0
+
+    /// Random seed picked per pointing gesture so every circle wobbles
+    /// differently (start angle, radius noise, squish phase).
+    @State private var penCircleSeed: Double = 0.0
+
+    @State private var penCircleOpacity: Double = 0.0
 
     // MARK: - Onboarding Video Layout
 
@@ -302,6 +365,24 @@ struct BlueCursorView: View {
                     .onPreferenceChange(NavigationBubbleSizePreferenceKey.self) { newSize in
                         navigationBubbleSize = newSize
                     }
+            }
+
+            // Hand-drawn pen circle — sketched around the element the buddy is
+            // pointing at, like someone circling it with a marker. Drawn beneath
+            // the triangle so the buddy sits on top of the highlight.
+            if let penCircleCenter {
+                PenCircleShape(seed: penCircleSeed)
+                    .trim(from: 0, to: penCircleProgress)
+                    .stroke(
+                        DS.Colors.overlayCursorBlue,
+                        style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
+                    )
+                    .frame(width: 72, height: 72)
+                    .shadow(color: DS.Colors.overlayCursorBlue.opacity(0.5), radius: 5)
+                    .opacity(penCircleOpacity)
+                    .position(penCircleCenter)
+                    .animation(.easeOut(duration: 0.55), value: penCircleProgress)
+                    .animation(.easeOut(duration: 0.3), value: penCircleOpacity)
             }
 
             // Blue triangle cursor — shown when idle or while TTS is playing (responding).
@@ -470,6 +551,16 @@ struct BlueCursorView: View {
         // Convert the AppKit screen location to SwiftUI coordinates for this screen
         let targetInSwiftUI = convertScreenPointToSwiftUICoordinates(screenLocation)
 
+        // Arm the pen circle at the exact element location (not the buddy's
+        // offset landing spot). It stays invisible until the buddy arrives.
+        penCircleCenter = CGPoint(
+            x: max(40, min(targetInSwiftUI.x, screenFrame.width - 40)),
+            y: max(40, min(targetInSwiftUI.y, screenFrame.height - 40))
+        )
+        penCircleSeed = Double.random(in: 0..<1)
+        penCircleProgress = 0.0
+        penCircleOpacity = 0.0
+
         // Offset the target so the buddy sits beside the element rather than
         // directly on top of it — 8px to the right, 12px below.
         let offsetTarget = CGPoint(
@@ -585,6 +676,11 @@ struct BlueCursorView: View {
         // Rotate back to default pointer angle now that we've arrived
         triangleRotationDegrees = -35.0
 
+        // Draw the pen circle around the element: fade the stroke in and
+        // animate trim 0 → 1 so it appears to be sketched by hand.
+        penCircleOpacity = 1.0
+        penCircleProgress = 1.0
+
         // Reset navigation bubble state — start small for the scale-bounce entrance
         navigationBubbleText = ""
         navigationBubbleOpacity = 1.0
@@ -679,7 +775,19 @@ struct BlueCursorView: View {
         navigationBubbleText = ""
         navigationBubbleOpacity = 0.0
         navigationBubbleScale = 1.0
+        dismissPenCircle()
         companionManager.clearDetectedElementLocation()
+    }
+
+    /// Fades the pen circle out, then removes it from the view tree.
+    private func dismissPenCircle() {
+        guard penCircleCenter != nil else { return }
+        penCircleOpacity = 0.0
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            guard self.penCircleOpacity == 0.0 else { return }
+            self.penCircleCenter = nil
+            self.penCircleProgress = 0.0
+        }
     }
 
     // MARK: - Welcome Animation
