@@ -71,13 +71,73 @@ final class ACPAgentClient: ObservableObject {
     /// Delivery target for agent_message_chunk text while a prompt is in flight.
     private var activeChunkHandler: ((String) -> Void)?
 
-    /// True after the first prompt of the current session has carried the
-    /// full instruction block. Later prompts send a one-line reminder instead.
-    private var hasSentInstructionsThisSession = false
+    // MARK: The openclicky agent
 
-    /// The instruction block prepended to the first prompt of each session.
-    /// Set by CompanionManager before the first prompt.
-    var instructionBlock: String = ""
+    /// clicky's instructions live in a dedicated kiro-cli custom agent config
+    /// (ACP has no system-prompt parameter, and per-session instruction
+    /// prompts waste a turn). The agent also declares tools: [] and loads no
+    /// MCP servers, which makes session startup ~4x faster and guarantees a
+    /// spoken question can never trigger side effects.
+    /// See docs/reference/kiro-cli.md.
+    static let agentName = "openclicky"
+
+    private static let agentPrompt = """
+    you're clicky, a friendly always-on companion that lives in the user's menu bar on their mac. the user speaks to you via push-to-talk and you can see their screen. your reply may be spoken aloud via text-to-speech and shown as text next to their cursor. this is an ongoing conversation — you remember everything they've said before.
+
+    rules:
+    - you have no tools. answer directly from the message, the images, and the context you're given.
+    - default to one or two sentences. be direct and dense. if the user asks you to explain more or go deeper, give a thorough explanation.
+    - all lowercase, casual, warm. no emojis. no markdown, no lists, no formatting — just natural speech, short sentences.
+    - don't use abbreviations that sound weird read aloud. write "for example" not "e.g.", spell out small numbers.
+    - if the user's question relates to what's on their screen, reference specific things you see. if the screenshot isn't relevant, just answer the question.
+    - never say "simply" or "just". don't read code verbatim — describe it conversationally.
+    - a [context] section may follow the user's words with image labels and a list of accessibility elements from the frontmost app. use the element names to be precise about what's on screen.
+
+    element pointing:
+    you have a small blue triangle cursor that can fly to and point at things on screen. point whenever it would genuinely help — finding a menu, a button, navigating an app. don't point for general knowledge questions.
+
+    when you point, append a coordinate tag at the very end of your response, after your spoken text. the screenshot images are labeled with their pixel dimensions — your coordinates MUST be integer pixel coordinates in that image's coordinate space, origin top-left. the accessibility element coordinates in [context] are a different coordinate space; use them only to identify elements by name, never copy them into the tag.
+
+    format: [POINT:x,y:label] where label is a short 1-3 word description. if the element is on a different screen than the cursor, append :screenN using the screen number from the image label. if pointing wouldn't help, append [POINT:none].
+
+    examples:
+    - "you'll want the color inspector — top right of the toolbar. [POINT:1100,42:color inspector]"
+    - "html is the skeleton of every web page. [POINT:none]"
+    """
+
+    /// Writes the openclicky agent config to the global kiro-cli agent
+    /// directory. Runs on every start: creates the file when missing and
+    /// rewrites it when the embedded prompt changed (so app updates keep the
+    /// agent in sync). Leaves the file alone when it already matches.
+    static func ensureAgentConfigInstalled() {
+        let agentsDirectory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".kiro/agents", isDirectory: true)
+        let agentConfigURL = agentsDirectory.appendingPathComponent("\(agentName).json")
+
+        if let existingData = try? Data(contentsOf: agentConfigURL),
+           let existingConfig = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any],
+           existingConfig["prompt"] as? String == agentPrompt {
+            return
+        }
+
+        let agentConfig: [String: Any] = [
+            "name": agentName,
+            "description": "OpenClicky voice companion. Answers push-to-talk questions about the user's screen with optional [POINT] cursor tags. Installed and managed by the OpenClicky app.",
+            "prompt": agentPrompt,
+            "tools": [] as [String],
+            "mcpServers": [:] as [String: Any],
+            "includeMcpJson": false,
+        ]
+
+        do {
+            try FileManager.default.createDirectory(at: agentsDirectory, withIntermediateDirectories: true)
+            let configData = try JSONSerialization.data(withJSONObject: agentConfig, options: [.prettyPrinted, .sortedKeys])
+            try configData.write(to: agentConfigURL)
+            print("🤖 ACP: installed agent config at \(agentConfigURL.path)")
+        } catch {
+            print("⚠️ ACP: could not install agent config: \(error.localizedDescription)")
+        }
+    }
 
     // MARK: Lifecycle
 
@@ -106,10 +166,11 @@ final class ACPAgentClient: ObservableObject {
 
         connectionState = .launching
         tearDownProcess()
+        Self.ensureAgentConfigInstalled()
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binaryPath)
-        process.arguments = ["acp"]
+        process.arguments = ["acp", "--agent", Self.agentName]
         // Give the subprocess a sane PATH so its own tooling resolves.
         var environment = ProcessInfo.processInfo.environment
         let homeDirectory = FileManager.default.homeDirectoryForCurrentUser.path
@@ -161,7 +222,6 @@ final class ACPAgentClient: ObservableObject {
                 throw ACPAgentClientError(message: "session/new returned no sessionId")
             }
             sessionID = newSessionID
-            hasSentInstructionsThisSession = false
 
             if let modes = sessionResult["modes"] as? [String: Any] {
                 currentAgentModeID = modes["currentModeId"] as? String
@@ -209,13 +269,7 @@ final class ACPAgentClient: ObservableObject {
             throw ACPAgentClientError(message: reason)
         }
 
-        var promptText = text
-        if !hasSentInstructionsThisSession && !instructionBlock.isEmpty {
-            promptText = instructionBlock + "\n\n---\n\nuser (via voice): " + text
-            hasSentInstructionsThisSession = true
-        }
-
-        var promptBlocks: [[String: Any]] = [["type": "text", "text": promptText]]
+        var promptBlocks: [[String: Any]] = [["type": "text", "text": text]]
         for image in images {
             promptBlocks.append([
                 "type": "image",
