@@ -1,7 +1,7 @@
 # kiro-cli Reference for OpenClicky
 
 How OpenClicky talks to kiro-cli: the ACP wire protocol, the custom agent that
-carries clicky's instructions, and operational details (sessions, logs,
+carries OpenClicky's instructions, and operational details (sessions, logs,
 troubleshooting). Facts marked VERIFIED were observed live against
 kiro-cli 2.20.1 on 2026-08-30; the rest comes from the official docs.
 
@@ -16,7 +16,7 @@ Sources:
 
 kiro-cli custom agents are JSON (or Markdown) configs that carry a system
 prompt, a tool allowlist, and MCP wiring. OpenClicky uses a dedicated agent so
-clicky's instructions live in the agent config instead of riding the first
+OpenClicky's instructions live in the agent config instead of riding the first
 prompt of every session.
 
 - Location: `~/.kiro/agents/openclicky.json` (global agent directory)
@@ -33,11 +33,13 @@ The config, and why each field is set:
 | `tools` | `[]` | The agent has NO tools. A spoken question can never trigger side effects, and no permission round trips happen |
 | `mcpServers` | `{}` | Loads none of the user's MCP servers |
 | `includeMcpJson` | `false` | Ignores global MCP config too |
-| `model` | unset | Uses the CLI's default model; `session/set_model` can change it per session |
+| `model` | `claude-haiku-4.5` | Pinned by the embedded app config; `session/set_model` is not used |
 
 VERIFIED effect: session/new drops from ~8-10s (default agent loading every
 configured MCP server) to ~2.3s, and the response honored the persona
 (lowercase voice, trailing `[POINT:none]`) with zero per-session instructions.
+The current coordinate response contract is documented in
+[`annotation-protocol.md`](annotation-protocol.md).
 
 Other schema fields available (from the docs, unused by OpenClicky for now):
 `description`, `welcomeMessage`, `excludedTools`, `toolAliases`, `resources`
@@ -174,7 +176,7 @@ kiro-cli agent validate --path ~/.kiro/agents/openclicky.json
 # 2. Agent listed?
 kiro-cli agent list | grep openclicky
 
-# 3. Interactive smoke test in clicky's persona:
+# 3. Interactive smoke test in OpenClicky's persona:
 kiro-cli chat --agent openclicky
 #    ask: "what's html?"  -> expect lowercase clicky voice ending in [POINT:none]
 ```

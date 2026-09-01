@@ -180,8 +180,7 @@ struct CompanionPanelView: View {
 
     // MARK: - Start Button
 
-    // The upstream email-collection gate (FormSpark + PostHog identify) was
-    // removed in M0 — onboarding starts directly.
+    // Onboarding starts directly after the required permissions are granted.
     @ViewBuilder
     private var startButton: some View {
         if !companionManager.hasCompletedOnboarding && companionManager.allPermissionsGranted {

@@ -31,7 +31,7 @@ final class CompanionManager: ObservableObject {
     @Published private(set) var hasScreenContentPermission = false
 
     /// Screen location (global AppKit coords) of a detected UI element the
-    /// buddy should fly to and point at. Parsed from Claude's response;
+    /// buddy should fly to and point at. Parsed from the active agent response;
     /// observed by BlueCursorView to trigger the flight animation.
     @Published var detectedElementScreenLocation: CGPoint?
     /// The display frame (global AppKit coords) of the screen the detected
@@ -52,19 +52,15 @@ final class CompanionManager: ObservableObject {
     let buddyDictationManager = BuddyDictationManager()
     let globalPushToTalkShortcutMonitor = GlobalPushToTalkShortcutMonitor()
     let overlayWindowManager = OverlayWindowManager()
-    // Response text is now displayed inline on the cursor overlay via
-    // streamingResponseText, so no separate response overlay manager is needed.
+    // Full-screen buddy overlays and the smaller cursor-following response
+    // panel are managed separately because they have different lifecycles.
 
-    /// On-device text-to-speech for spoken responses. Replaced the ElevenLabs
-    /// cloud TTS client in M0 so responses are spoken with zero network
-    /// dependency. May be upgraded to a higher-quality local engine in M3.
     /// Per-sentence TTS. Cloud (Cartesia/Deepgram, keys from .env) when
     /// configured, on-device AVSpeechSynthesizer otherwise. Failed cloud
     /// fetches fall back to the local voice per sentence.
     private let ttsClient: any SentenceTTSClient = CloudSentenceTTSClient.makeDefaultTTSClient()
 
-    /// The local agent (kiro-cli in ACP mode) that generates responses.
-    /// Replaced the M0 placeholder and the upstream ClaudeAPI + worker seam.
+    /// The local kiro-cli ACP process that generates streamed responses.
     let acpAgentClient = ACPAgentClient()
 
     /// Accessibility-tree extraction for the frontmost app (M2): exact
@@ -117,8 +113,8 @@ final class CompanionManager: ObservableObject {
     var isTextResponseEnabled: Bool { responseModality != .voiceOnly }
     var isVoiceResponseEnabled: Bool { responseModality != .textOnly }
 
-    /// Conversation history so Claude remembers prior exchanges within a session.
-    /// Each entry is the user's transcript and Claude's response.
+    /// Local copy of recent exchanges for clipboard and future transcript UI.
+    /// The persistent ACP session owns the agent's actual conversation context.
     private var conversationHistory: [(userTranscript: String, assistantResponse: String)] = []
 
     /// The currently running AI response task, if any. Cancelled when the user
@@ -176,6 +172,7 @@ final class CompanionManager: ObservableObject {
     }
 
     func start() {
+        WindowPositionManager.migrateScreenRecordingConfirmationKeyIfNeeded()
         refreshAllPermissions()
         print("🔑 Clicky start — accessibility: \(hasAccessibilityPermission), screen: \(hasScreenRecordingPermission), mic: \(hasMicrophonePermission), screenContent: \(hasScreenContentPermission), onboarded: \(hasCompletedOnboarding)")
         startPermissionPolling()
@@ -215,26 +212,23 @@ final class CompanionManager: ObservableObject {
     /// Called by BlueCursorView after the buddy finishes its pointing
     /// animation and returns to cursor-following mode.
     /// Triggers the onboarding sequence — dismisses the panel and restarts
-    /// the overlay so the welcome animation and intro video play.
+    /// the overlay so the welcome animation and instruction sequence play.
     func triggerOnboarding() {
         // Post notification so the panel manager can dismiss the panel
         NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
 
-        // Mark onboarding as completed so the Start button won't appear
-        // again on future launches — the cursor will auto-show instead
+        // Mark onboarding as completed so the Start button will not appear
+        // on future launches; the cursor will auto-show instead.
         hasCompletedOnboarding = true
 
-
-
-        // Show the overlay for the first time — isFirstAppearance triggers
-        // the welcome animation and onboarding video
+        // Recreate the overlay so isFirstAppearance triggers the welcome
+        // animation and local instruction sequence.
         overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
         isOverlayVisible = true
     }
 
     /// Replays the onboarding experience from the "Watch Onboarding Again"
-    /// footer link. Same flow as triggerOnboarding but the cursor overlay
-    /// is already visible so we just restart the welcome animation and video.
+    /// footer link by restarting the welcome animation and instruction sequence.
     func replayOnboarding() {
         NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
         // Tear down any existing overlays and recreate with isFirstAppearance = true
@@ -251,10 +245,9 @@ final class CompanionManager: ObservableObject {
 
     // MARK: - Onboarding Instruction Sequence
 
-    /// Lines streamed next to the cursor during first-run onboarding. This
-    /// replaces the upstream intro video (a network-streamed mux asset with
-    /// bundled music): fully offline, transparent overlay, and the hotkey
-    /// works the whole time — pressing it skips straight to the real thing.
+    /// Lines streamed next to the cursor during first-run onboarding. The
+    /// sequence is fully offline on the transparent overlay, and pressing the
+    /// hotkey skips directly to a real interaction.
     /// The welcome bubble ("hey! i'm clicky") has already played when this
     /// sequence starts, so the lines pick up from there.
     private static let onboardingInstructionLines: [String] = [
@@ -629,12 +622,8 @@ final class CompanionManager: ObservableObject {
     /// Captures a screenshot, generates a response for the transcript, and
     /// plays the response aloud via on-device TTS. The cursor stays in the
     /// spinner/processing state until speech begins. The response may include
-    /// a [POINT:x,y:label] tag which triggers the buddy to fly to that
+    /// a [POINT:x,y:label] tag that triggers the buddy to fly to that
     /// element on screen.
-    ///
-    /// M0: the response comes from PlaceholderResponseGenerator (local,
-    /// deterministic). M1 replaces that seam with ACPAgentClient so a local
-    /// agent produces real answers from the transcript + screenshots.
     private func respondToTranscriptWithScreenshot(transcript: String) {
         currentResponseTask?.cancel()
         ttsClient.stopPlayback()
@@ -894,11 +883,11 @@ final class CompanionManager: ObservableObject {
 
     // MARK: - Point Tag Parsing
 
-    /// Result of parsing a [POINT:...] tag from Claude's response.
+    /// Result of parsing a [POINT:...] tag from the active agent response.
     struct PointingParseResult {
         /// The response text with the [POINT:...] tag removed — this is what gets spoken.
         let spokenText: String
-        /// The parsed pixel coordinate, or nil if Claude said "none" or no tag was found.
+        /// The parsed pixel coordinate, or nil if the agent said "none" or no tag was found.
         let coordinate: CGPoint?
         /// Short label describing the element (e.g. "run button"), or "none".
         let elementLabel: String?
@@ -906,7 +895,7 @@ final class CompanionManager: ObservableObject {
         let screenNumber: Int?
     }
 
-    /// Parses a [POINT:x,y:label:screenN] or [POINT:none] tag from the end of Claude's response.
+    /// Parses a [POINT:x,y:label:screenN] or [POINT:none] tag from the end of an agent response.
     /// Returns the spoken text (tag removed) and the optional coordinate + label + screen number.
     static func parsePointingCoordinates(from responseText: String) -> PointingParseResult {
         // Match [POINT:none] or [POINT:123,456:label] or [POINT:123,456:label:screen2]
@@ -947,34 +936,5 @@ final class CompanionManager: ObservableObject {
             elementLabel: elementLabel,
             screenNumber: screenNumber
         )
-    }
-
-
-    // MARK: - Onboarding Demo Interaction
-
-    private static let onboardingDemoSystemPrompt = """
-    you're clicky, a small blue cursor buddy living on the user's screen. you're showing off during onboarding — look at their screen and find ONE specific, concrete thing to point at. pick something with a clear name or identity: a specific app icon (say its name), a specific word or phrase of text you can read, a specific filename, a specific button label, a specific tab title, a specific image you can describe. do NOT point at vague things like "a window" or "some text" — be specific about exactly what you see.
-
-    make a short quirky 3-6 word observation about the specific thing you picked — something fun, playful, or curious that shows you actually read/recognized it. no emojis ever. NEVER quote or repeat text you see on screen — just react to it. keep it to 6 words max, no exceptions.
-
-    CRITICAL COORDINATE RULE: you MUST only pick elements near the CENTER of the screen. your x coordinate must be between 20%-80% of the image width. your y coordinate must be between 20%-80% of the image height. do NOT pick anything in the top 20%, bottom 20%, left 20%, or right 20% of the screen. no menu bar items, no dock icons, no sidebar items, no items near any edge. only things clearly in the middle area of the screen. if the only interesting things are near the edges, pick something boring in the center instead.
-
-    respond with ONLY your short comment followed by the coordinate tag. nothing else. all lowercase.
-
-    format: your comment [POINT:x,y:label]
-
-    the screenshot images are labeled with their pixel dimensions. use those dimensions as the coordinate space. origin (0,0) is top-left. x increases rightward, y increases downward.
-    """
-
-    /// Onboarding demo where the buddy finds something interesting on screen
-    /// and flies to it while the intro video plays.
-    ///
-    /// M0: DISABLED. Upstream this asked Claude (via the removed worker proxy)
-    /// to pick an element and comment on it. It needs a vision-capable brain,
-    /// which arrives with ACPAgentClient in M1 — re-enable it then by routing
-    /// onboardingDemoSystemPrompt through the agent and reusing the
-    /// coordinate-mapping path in respondToTranscriptWithScreenshot.
-    func performOnboardingDemoInteraction() {
-        print("🎯 Onboarding demo: skipped — requires the ACP agent (M1)")
     }
 }

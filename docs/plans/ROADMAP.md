@@ -1,8 +1,9 @@
 # OpenClicky Roadmap
 
 Status: living document. Update when a milestone ships or a plan is
-promoted/dropped. Companion docs: `docs/UX-BASELINE.md` (interaction
-baseline), `docs/reference/kiro-cli.md` (ACP wire contract).
+promoted/dropped. Companion docs: [`../architecture.md`](../architecture.md)
+(as-built system), [`../UX-BASELINE.md`](../UX-BASELINE.md) (interaction
+baseline), and [`../reference/kiro-cli.md`](../reference/kiro-cli.md) (ACP wire contract).
 
 ## Where we are
 
@@ -28,7 +29,8 @@ Shipped UX beyond the milestones (see UX-BASELINE Section 6):
 
 ## Near-term (committed direction, unscheduled)
 
-1. **Annotation grammar (Q2).** Generalize `[POINT]` into a vocabulary
+1. **Annotation grammar (Q2).** Generalize the current
+   [`[POINT]` protocol](../reference/annotation-protocol.md) into a vocabulary
    the agent can emit and the overlay can draw: POINT, CIRCLE, ARROW,
    STEP, each with an optional caption. Core parses, shell renders.
    The pen circle renderer is the first shell primitive for this.
@@ -37,9 +39,6 @@ Shipped UX beyond the milestones (see UX-BASELINE Section 6):
    portability; leave AppKit surfaces in the shell.
 3. **D2 layers 2 and 3.** Per-interaction voice modality commands
    ("answer silently") and the ctrl+option+shift silent-ask hotkey.
-4. **Cleanup backlog.** Stale README, dead `ElementLocationDetector.swift`
-   and `ClaudeAPI.swift`, upstream tutorial assets, scheme rename
-   (deferred while pbxproj churn outweighs the benefit).
 
 ## Potential plans (not committed)
 

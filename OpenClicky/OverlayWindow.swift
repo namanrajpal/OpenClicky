@@ -424,7 +424,7 @@ struct BlueCursorView: View {
                 .animation(.spring(response: 0.2, dampingFraction: 0.6, blendDuration: 0), value: cursorPosition)
                 .animation(.easeIn(duration: 0.15), value: companionManager.voiceState)
 
-            // Blue spinner — shown while the AI is processing (transcription + Claude + waiting for TTS)
+            // Blue spinner shown while transcription, the agent response, or TTS preparation is pending.
             BlueCursorSpinnerView()
                 .opacity(buddyIsVisibleOnThisScreen && companionManager.voiceState == .processing ? cursorOpacity : 0)
                 .position(cursorPosition)
@@ -812,7 +812,7 @@ struct BlueCursorView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
                     self.showWelcome = false
                     // Stream the instruction lines right after the welcome text
-                    // disappears (replaces the upstream intro video)
+                    // disappears, then continue with the local instruction sequence.
                     self.companionManager.startOnboardingInstructionSequence()
                 }
                 return

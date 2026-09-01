@@ -5,9 +5,9 @@ ask about anything on your screen, and it answers out loud, in streaming text,
 and by flying a little blue cursor over to point at things.
 
 OpenClicky is local-first. Speech recognition runs on-device, speech output
-runs on-device by default, and the AI brain is a local agent CLI you already
-have; the app itself holds zero API keys and opens zero network connections
-of its own.
+runs on-device by default, and the AI brain is an agent CLI subprocess you
+already have. The app holds no model-provider credentials. Optional Cartesia
+or Deepgram speech uses keys you configure locally.
 
 ## What it does
 
@@ -29,26 +29,38 @@ of its own.
 
 ## How it works
 
+```mermaid
+flowchart TD
+    HOTKEY["Control+Option held<br/>voice and optional lasso"] --> STT["Apple Speech<br/>on-device transcription"]
+    HOTKEY --> LASSO["Optional lasso<br/>rectangular screen crop"]
+    STT --> AX["Accessibility snapshot<br/>frontmost app element names and positions"]
+    AX --> ROUTE{"Confident element-location request<br/>with no lasso?"}
+
+    ROUTE -->|yes| LOCAL["Local router answer<br/>exact AX coordinate"]
+    LOCAL --> OUTPUT["Streaming text, ordered speech,<br/>cursor flight, and pen circle"]
+
+    ROUTE -->|no| CAPTURE["ScreenCaptureKit<br/>active display or lasso crop"]
+    LASSO --> CAPTURE
+    CAPTURE --> PROMPT["Transcript + JPEG + image dimensions<br/>+ AX names without coordinates"]
+    AX -. names only .-> PROMPT
+    PROMPT --> ACP["kiro-cli ACP subprocess<br/>JSON-RPC over stdio"]
+    ACP --> STREAM["Stream response chunks"]
+    STREAM --> OUTPUT
+    STREAM --> POINT["Parse trailing POINT tag<br/>pixel coordinate to AppKit point"]
+    POINT --> OUTPUT
+
+    HOTKEY -. new press cancels<br/>task, ACP turn, and speech .-> ACP
+
+    classDef native fill:#eaf2ff,stroke:#3380ff,color:#172033;
+    classDef core fill:#f3efff,stroke:#7257d8,color:#21183f;
+    classDef fast fill:#eaf8ef,stroke:#2f8f57,color:#14351f;
+    class HOTKEY,STT,LASSO,AX,CAPTURE,OUTPUT native;
+    class ROUTE,PROMPT,ACP,STREAM,POINT core;
+    class LOCAL fast;
 ```
-hold ctrl+option ──▶ mic ──▶ Apple Speech (on-device STT)
-                                   │
-                        ┌──────────▼──────────┐
-                        │  deterministic router │── element question? ──▶ AX tree lookup,
-                        └──────────┬──────────┘                          exact-coordinate pointing
-                                   │ everything else
-                                   ▼
-                  active display (or lasso region) captured
-                                   │
-                                   ▼
-                 local agent: kiro-cli spawned as a subprocess
-                 speaking the Agent Client Protocol (JSON-RPC
-                 over stdio, image content blocks, streaming)
-                                   │
-                                   ▼
-              text streams into the cursor bubble, sentences are
-              spoken as they complete, and a trailing [POINT:x,y]
-              tag flies the cursor to the referenced element
-```
+
+See [Architecture](docs/architecture.md) for the request lifecycle, component
+ownership, cancellation behavior, trust boundaries, and coordinate spaces.
 
 The agent brings its own auth and model access. A persistent session holds
 conversation memory, so follow-ups just work. The app installs a dedicated
@@ -111,7 +123,8 @@ Sentences fall back to the local voice automatically if a fetch fails.
 OpenClicky/
 ├── Core/                          portable core (no AppKit)
 │   ├── ACPAgentClient.swift          agent subprocess, ACP JSON-RPC, streaming
-│   ├── QuestionRouter.swift          on-device vs agent routing rules
+│   ├── EnvFileLoader.swift            optional TTS configuration lookup
+│   ├── QuestionRouter.swift           on-device vs agent routing rules
 │   └── StreamingSentenceSplitter.swift  per-sentence TTS + tag holdback
 ├── CompanionManager.swift         central state machine and pipeline
 ├── OverlayWindow.swift            cursor buddy, pointing flight, pen circle, lasso stroke
@@ -126,18 +139,22 @@ OpenClicky/
 
 More depth:
 
-- `AGENTS.md`: architecture doc for AI coding agents (and humans)
-- `docs/UX-BASELINE.md`: the interaction model and every UX decision
-- `docs/reference/kiro-cli.md`: the ACP wire protocol as verified live
-- `docs/plans/`: roadmap and design sketches (guided multi-step tasks)
+- [`docs/README.md`](docs/README.md): documentation map and reading paths
+- [`docs/setup.md`](docs/setup.md): development setup and first-run checks
+- [`docs/architecture.md`](docs/architecture.md): as-built architecture and data flow
+- [`docs/reference/components.md`](docs/reference/components.md): component and internal API map
+- [`docs/reference/configuration.md`](docs/reference/configuration.md): runtime configuration
+- [`docs/UX-BASELINE.md`](docs/UX-BASELINE.md): shipped interaction model and UX decisions
+- [`docs/plans/`](docs/plans/): roadmap and design sketches
+- [`AGENTS.md`](AGENTS.md): coding-agent conventions and architecture summary
 
 ## Privacy
 
-Nothing runs in the background. A screenshot is taken only while the hotkey
-is held, covers only the active display (or your lasso region), and goes only
-to the local agent process. The app has no analytics, no auto-updater, and no
-network code of its own; optional cloud TTS is the single exception and only
-when you provide keys.
+Nothing captures the screen in the background. A screenshot is taken only
+for a submitted hotkey interaction, covers the active display or lasso region,
+and is handed to the local `kiro-cli` process. The CLI uses its own configured
+model provider. The app has no analytics or auto-updater. Optional cloud TTS
+sends completed response sentences only when you configure provider keys.
 
 ## License
 

@@ -4,9 +4,9 @@
 //
 //  Agent Client Protocol (ACP) client. Spawns a local agent CLI (kiro-cli in
 //  ACP mode) as a stdio subprocess speaking newline-delimited JSON-RPC 2.0,
-//  and exposes a streaming prompt API. This replaces the upstream ClaudeAPI +
-//  Cloudflare Worker seam: the agent brings its own auth and model access, so
-//  the app holds zero API keys and opens zero network connections itself.
+//  and exposes a streaming prompt API. It replaces the removed direct cloud
+//  client and proxy seam. The agent owns model authentication and transport;
+//  optional cloud TTS remains an explicit app-level network path.
 //
 //  Verified against kiro-cli 2.20.1 (protocolVersion 1):
 //  - initialize returns promptCapabilities.image = true, so screenshots are

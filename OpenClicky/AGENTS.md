@@ -1,28 +1,21 @@
-# AGENTS.md - OpenClicky (Main App Target)
+# OpenClicky App Target
 
-## Source Files
+The repository-root [`AGENTS.md`](../AGENTS.md) is the single source of truth for coding conventions, architecture, build rules, and the full key-file table.
 
-### FloatingSessionButton.swift
-- `FloatingSessionButtonManager` — `@MainActor` class managing the `NSPanel` lifecycle
-  - `showFloatingButton()` — Creates/shows the panel in top-right of primary screen
-  - `hideFloatingButton()` — Hides panel (keeps it alive for quick re-show)
-  - `destroyFloatingButton()` — Removes panel permanently (session ended)
-  - `onFloatingButtonClicked` — Callback closure, set by ContentView to bring main window to front
-  - `floatingButtonPanel` — Exposed `NSPanel` reference for screenshot exclusion
-- `FloatingButtonView` — Private SwiftUI view with gradient circle, scale+glow hover animation, pointer cursor
+Target-specific structure:
 
-### ContentView.swift
-- Receives `FloatingSessionButtonManager` via `@EnvironmentObject`
-- `isMainWindowCurrentlyFocused` — Tracks main window focus state
-- `configureFloatingButtonManager()` — Wires up the click callback
-- `startObservingMainWindowFocusChanges()` — Sets up `NSWindow` notification observers
-- `updateFloatingButtonVisibility()` — Core logic: show if running + not focused, hide otherwise
-- `bringMainWindowToFront()` — Activates app and orders main window front
+```text
+OpenClicky/
+├── Core/                        Foundation-only routing, ACP, streaming, and configuration
+├── OpenClickyApp.swift          app and delegate lifecycle
+├── CompanionManager.swift      central state and request pipeline
+├── Buddy*.swift                microphone, transcription, and audio support
+├── Companion*.swift            panel, capture, and response surfaces
+├── OverlayWindow.swift         cursor buddy, lasso, pointing, and pen circle
+├── AXTreeProvider.swift        accessibility snapshot and exact local coordinates
+├── CloudSentenceTTSClient.swift
+├── LocalSpeechSynthesizerTTSClient.swift
+└── DesignSystem.swift
+```
 
-### ScreenshotManager.swift
-- `floatingButtonWindowToExcludeFromCaptures` — `NSWindow?` reference set by ContentView
-- `captureScreen()` — Matches the floating window to an `SCWindow` and excludes it from capture filter
-
-### OpenClickyApp.swift
-- Owns `FloatingSessionButtonManager` as `@StateObject`
-- Injects it into ContentView via `.environmentObject()`
+For human-facing system documentation, start at [`../docs/README.md`](../docs/README.md). The as-built component map is [`../docs/reference/components.md`](../docs/reference/components.md).

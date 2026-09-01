@@ -2,11 +2,8 @@
 //  LocalSpeechSynthesizerTTSClient.swift
 //  OpenClicky
 //
-//  On-device text-to-speech using AVSpeechSynthesizer. This is the M0
-//  stopgap replacement for the ElevenLabs cloud TTS client — same call
-//  surface (speakText / isPlaying / stopPlayback) so CompanionManager's
-//  pipeline sequencing is unchanged. A higher-quality local TTS engine
-//  may replace this in M3 if the system voice quality disappoints.
+//  On-device SentenceTTSClient implementation and per-sentence fallback for
+//  optional cloud speech providers.
 //
 
 import AVFoundation
@@ -15,16 +12,6 @@ import Foundation
 @MainActor
 final class LocalSpeechSynthesizerTTSClient {
     private let speechSynthesizer = AVSpeechSynthesizer()
-
-    /// Speaks `text` through the system speech synthesizer. Returns once
-    /// speech has been enqueued and started — mirroring the ElevenLabs
-    /// client, which returned once audio playback began. Callers poll
-    /// `isPlaying` to know when speech has finished.
-    func speakText(_ text: String) async throws {
-        try Task.checkCancellation()
-        enqueueSentence(text)
-        print("🔊 Local TTS: speaking \(text.count) characters")
-    }
 
     /// Enqueues one sentence for speech. AVSpeechSynthesizer queues
     /// utterances natively, so calling this per completed sentence while a

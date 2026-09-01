@@ -2,8 +2,8 @@
 //  WindowPositionManager.swift
 //  OpenClicky
 //
-//  Manages positioning the app window on the right edge of the screen
-//  and shrinking overlapping windows from other apps via the Accessibility API.
+//  Owns Accessibility and Screen Recording permission flows plus shared
+//  display-identification helpers.
 //
 
 import AppKit
@@ -20,7 +20,25 @@ enum PermissionRequestPresentationDestination: Equatable {
 class WindowPositionManager {
     private static var hasAttemptedAccessibilitySystemPromptDuringCurrentLaunch = false
     private static var hasAttemptedScreenRecordingSystemPromptDuringCurrentLaunch = false
-    private static let hasPreviouslyConfirmedScreenRecordingPermissionUserDefaultsKey = "com.learningbuddy.hasPreviouslyConfirmedScreenRecordingPermission"
+    private static let screenRecordingPermissionConfirmedKey =
+        "com.namanrajpal.openclicky.hasPreviouslyConfirmedScreenRecordingPermission"
+    private static let legacyScreenRecordingPermissionConfirmedKey =
+        "com.learningbuddy.hasPreviouslyConfirmedScreenRecordingPermission"
+
+    /// Moves the pre-rebrand permission hint into the canonical OpenClicky key.
+    /// The migration is idempotent and preserves an explicitly stored false value.
+    static func migrateScreenRecordingConfirmationKeyIfNeeded(
+        _ userDefaults: UserDefaults = .standard
+    ) {
+        if userDefaults.object(forKey: screenRecordingPermissionConfirmedKey) == nil,
+           userDefaults.object(forKey: legacyScreenRecordingPermissionConfirmedKey) != nil {
+            userDefaults.set(
+                userDefaults.bool(forKey: legacyScreenRecordingPermissionConfirmedKey),
+                forKey: screenRecordingPermissionConfirmedKey
+            )
+        }
+        userDefaults.removeObject(forKey: legacyScreenRecordingPermissionConfirmedKey)
+    }
 
     /// Returns true when the Mac currently has more than one connected display.
     /// Uses AppKit's screen list, which is available without ScreenCaptureKit's
@@ -77,9 +95,10 @@ class WindowPositionManager {
 
     /// Returns true if Screen Recording permission is granted.
     static func hasScreenRecordingPermission() -> Bool {
+        migrateScreenRecordingConfirmationKeyIfNeeded()
         let hasScreenRecordingPermissionNow = CGPreflightScreenCaptureAccess()
         if hasScreenRecordingPermissionNow {
-            UserDefaults.standard.set(true, forKey: hasPreviouslyConfirmedScreenRecordingPermissionUserDefaultsKey)
+            UserDefaults.standard.set(true, forKey: screenRecordingPermissionConfirmedKey)
         }
         return hasScreenRecordingPermissionNow
     }
@@ -91,7 +110,7 @@ class WindowPositionManager {
     static func shouldTreatScreenRecordingPermissionAsGrantedForSessionLaunch() -> Bool {
         shouldTreatScreenRecordingPermissionAsGrantedForSessionLaunch(
             hasScreenRecordingPermissionNow: hasScreenRecordingPermission(),
-            hasPreviouslyConfirmedScreenRecordingPermission: UserDefaults.standard.bool(forKey: hasPreviouslyConfirmedScreenRecordingPermissionUserDefaultsKey)
+            hasPreviouslyConfirmedScreenRecordingPermission: UserDefaults.standard.bool(forKey: screenRecordingPermissionConfirmedKey)
         )
     }
 
@@ -103,7 +122,8 @@ class WindowPositionManager {
     }
 
     static func clearPreviouslyConfirmedScreenRecordingPermission() {
-        UserDefaults.standard.removeObject(forKey: hasPreviouslyConfirmedScreenRecordingPermissionUserDefaultsKey)
+        UserDefaults.standard.removeObject(forKey: screenRecordingPermissionConfirmedKey)
+        UserDefaults.standard.removeObject(forKey: legacyScreenRecordingPermissionConfirmedKey)
     }
 
     /// Prompts the system dialog for Screen Recording permission.
@@ -150,105 +170,7 @@ class WindowPositionManager {
         return .systemPrompt
     }
 
-    // MARK: - Window Positioning
 
-    /// Positions the app's main window pinned to the right edge of the screen
-    /// that contains the given display ID, vertically centered.
-    static func pinMainWindowToRight(onDisplayID displayID: CGDirectDisplayID?) {
-        guard let mainWindow = NSApp.windows.first(where: { !($0 is NSPanel) }) else { return }
-
-        // Find the NSScreen matching the selected display, or fall back to the screen
-        // the window is currently on, or finally the main screen.
-        let targetScreen: NSScreen
-        if let displayID,
-           let matchingScreen = NSScreen.screens.first(where: { $0.displayID == displayID }) {
-            targetScreen = matchingScreen
-        } else if let currentScreen = mainWindow.screen {
-            targetScreen = currentScreen
-        } else if let mainScreen = NSScreen.main {
-            targetScreen = mainScreen
-        } else {
-            return
-        }
-
-        let visibleFrame = targetScreen.visibleFrame
-        let windowSize = mainWindow.frame.size
-
-        let x = visibleFrame.maxX - windowSize.width
-        let y = visibleFrame.minY + (visibleFrame.height - windowSize.height) / 2.0
-
-        mainWindow.setFrameOrigin(NSPoint(x: x, y: y))
-    }
-
-    // MARK: - Shrink Overlapping Windows
-
-    /// Checks if the frontmost (non-self) app's focused window overlaps our app window
-    /// on the same monitor and, if so, shrinks it so it no longer overlaps.
-    /// Only operates if both windows are on the same screen as `targetDisplayID`.
-    static func shrinkOverlappingFocusedWindow(targetDisplayID: CGDirectDisplayID?) {
-        guard hasAccessibilityPermission() else { return }
-        guard let mainWindow = NSApp.windows.first(where: { !($0 is NSPanel) }) else { return }
-        guard let mainScreen = mainWindow.screen else { return }
-
-        // Only operate if the main window is on the target display
-        if let targetDisplayID, mainScreen.displayID != targetDisplayID {
-            return
-        }
-
-        // Get the frontmost application that isn't us
-        guard let frontApp = NSWorkspace.shared.frontmostApplication,
-              frontApp.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
-            return
-        }
-
-        let appElement = AXUIElementCreateApplication(frontApp.processIdentifier)
-
-        // Get the focused window of the front app
-        var focusedWindowValue: AnyObject?
-        let focusedResult = AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedWindowValue)
-        guard focusedResult == .success, let focusedWindow = focusedWindowValue else { return }
-
-        // Get position and size of the focused window
-        var positionValue: AnyObject?
-        var sizeValue: AnyObject?
-        guard AXUIElementCopyAttributeValue(focusedWindow as! AXUIElement, kAXPositionAttribute as CFString, &positionValue) == .success,
-              AXUIElementCopyAttributeValue(focusedWindow as! AXUIElement, kAXSizeAttribute as CFString, &sizeValue) == .success else {
-            return
-        }
-
-        var otherPosition = CGPoint.zero
-        var otherSize = CGSize.zero
-        guard AXValueGetValue(positionValue as! AXValue, .cgPoint, &otherPosition),
-              AXValueGetValue(sizeValue as! AXValue, .cgSize, &otherSize) else {
-            return
-        }
-
-        // The other window's frame in screen coordinates (top-left origin from AX API).
-        // Convert to check if it's on the same screen as our window.
-        let otherRight = otherPosition.x + otherSize.width
-        let ourLeft = mainWindow.frame.origin.x
-
-        // Check that the other window is on the same screen by verifying its origin
-        // falls within the target screen's bounds.
-        let screenFrame = mainScreen.frame
-        let otherCenterX = otherPosition.x + otherSize.width / 2
-        // AX uses top-left origin, NSScreen uses bottom-left. Convert AX Y to NSScreen Y.
-        let otherNSScreenY = screenFrame.maxY - otherPosition.y - otherSize.height
-        let otherCenterY = otherNSScreenY + otherSize.height / 2
-        let otherCenter = NSPoint(x: otherCenterX, y: otherCenterY)
-
-        guard screenFrame.contains(otherCenter) else { return }
-
-        // If the other window's right edge extends past our window's left edge, shrink it.
-        if otherRight > ourLeft {
-            let newWidth = ourLeft - otherPosition.x
-            guard newWidth > 200 else { return } // Don't shrink too small
-
-            var newSize = CGSize(width: newWidth, height: otherSize.height)
-            guard let newSizeValue = AXValueCreate(.cgSize, &newSize) else { return }
-            AXUIElementSetAttributeValue(focusedWindow as! AXUIElement, kAXSizeAttribute as CFString, newSizeValue)
-        }
-    }
 }
 
 // MARK: - NSScreen Extension

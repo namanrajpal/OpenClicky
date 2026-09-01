@@ -30,12 +30,9 @@ protocol BuddyTranscriptionProvider {
 }
 
 enum BuddyTranscriptionProviderFactory {
-    /// Known provider identifiers for the VoiceTranscriptionProvider
-    /// Info.plist key. M0 removed the cloud providers (AssemblyAI streaming,
-    /// OpenAI upload) along with their proxy/key requirements — Apple Speech
-    /// is fully on-device and needs no configuration. The plist-driven
-    /// selection mechanism is kept so a future local provider (for example a
-    /// whisper.cpp-backed one in M3) can slot in without touching call sites.
+    /// Known provider identifiers for the VoiceTranscriptionProvider plist key.
+    /// Apple Speech is currently the only implementation. The provider surface
+    /// remains so another on-device engine can be added without changing callers.
     private enum PreferredProvider: String {
         case appleSpeech = "apple"
     }
