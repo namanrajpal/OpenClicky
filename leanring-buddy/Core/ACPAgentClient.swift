@@ -20,6 +20,7 @@
 //  framework. Process/Pipe come from Foundation.
 //
 
+import Combine
 import Foundation
 
 // MARK: - Public Types
