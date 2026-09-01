@@ -22,17 +22,23 @@ final class LocalSpeechSynthesizerTTSClient {
     /// `isPlaying` to know when speech has finished.
     func speakText(_ text: String) async throws {
         try Task.checkCancellation()
+        enqueueSentence(text)
+        print("🔊 Local TTS: speaking \(text.count) characters")
+    }
 
-        let utterance = AVSpeechUtterance(string: text)
+    /// Enqueues one sentence for speech. AVSpeechSynthesizer queues
+    /// utterances natively, so calling this per completed sentence while a
+    /// response is still streaming gives pipelined speech: sentence one plays
+    /// while the rest of the response is still being generated.
+    func enqueueSentence(_ sentenceText: String) {
+        let utterance = AVSpeechUtterance(string: sentenceText)
         // Use the enhanced system voice for the user's locale when available.
         // AVSpeechSynthesisVoice(language: nil) picks the user's default.
         utterance.voice = AVSpeechSynthesisVoice(language: nil)
         // Slightly slower than the default rate reads more naturally for
         // conversational responses.
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.95
-
         speechSynthesizer.speak(utterance)
-        print("🔊 Local TTS: speaking \(text.count) characters")
     }
 
     /// Whether speech is currently being spoken. CompanionManager polls this

@@ -1,7 +1,8 @@
 # OpenClicky UX Baseline
 
-Status: draft for review. Section 6 recommendations are proposed, pending sign-off.
-Snapshot: post-M0 (`feature/m0-strip`), 2026-08-30.
+Status: draft for review. D1, D2 layer 1, and D3 (local answers) SHIPPED with M1/M2
+on 2026-08-30; the rest of Section 6 remains proposed.
+Snapshot: post-M1/M2 (`feature/m0-strip`), 2026-08-30.
 
 This document records how a user interacts with OpenClicky today, exactly as
 implemented, and defines the baseline decisions for response modality and user
@@ -99,7 +100,7 @@ assets for the baseline, cheaper to revive than to rebuild.
 
 ## 6. Baseline decisions (proposed)
 
-### D1. Text becomes the primary record; audio becomes a preference
+### D1. Text becomes the primary record; audio becomes a preference — SHIPPED (M1)
 
 Every response renders as streaming text in a bubble anchored to the cursor
 (revive `CompanionResponseOverlayManager`, feed it from the M1 ACP stream).
@@ -107,7 +108,7 @@ Audio stays on by default but becomes a user preference. Text is the record,
 audio is the convenience. This single change fixes the largest gap (Section 4)
 and gives M1 streaming a visible surface.
 
-### D2. Modality control lives in three layers
+### D2. Modality control lives in three layers — layer 1 SHIPPED (M1); layers 2-3 pending
 
 1. Persistent preference: a panel control with three states: Voice + Text,
    Text only, Voice only. Replaces the dead "Show Clicky" toggle row.
@@ -117,7 +118,7 @@ and gives M1 streaming a visible surface.
 3. Hotkey variant: ctrl+option+shift asks silently. Power-user path, cheap to
    add since the CGEvent tap already reads modifier flags.
 
-### D3. The pointer bubble carries real content
+### D3. The pointer bubble carries real content — SHIPPED for router answers; agent POINT labels pending the annotation grammar
 
 The random pointer phrases ("right here!") are replaced by the element label or
 a short model-provided caption. When the annotation grammar lands (CIRCLE,

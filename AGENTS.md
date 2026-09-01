@@ -5,17 +5,19 @@
 
 ## Overview
 
-macOS menu bar companion app (OpenClicky — a fork of farzaa/clicky being rebuilt
+macOS menu bar companion app (OpenClicky — a fork of farzaa/clicky rebuilt
 around local-first execution). Lives entirely in the macOS status bar (no dock
-icon, no main window). Clicking the menu bar icon opens a custom floating panel
-with companion voice controls. Uses push-to-talk (ctrl+option) to capture voice
-input, transcribes it on-device via Apple Speech, and captures a screenshot of
-the user's screens. The response seam is currently a local placeholder
-(`PlaceholderResponseGenerator.swift`); milestone M1 replaces it with an Agent
-Client Protocol (ACP) client that spawns a local agent CLI (kiro-cli) as a
-stdio JSON-RPC subprocess. Responses are spoken via on-device
-AVSpeechSynthesizer TTS. A blue cursor overlay can fly to and point at UI
-elements referenced by `[POINT:x,y:label:screenN]` tags on any connected monitor.
+icon, no main window). Push-to-talk (ctrl+option) captures voice, transcribed
+on-device by Apple Speech. A deterministic router (M2) answers element-location
+questions locally from the accessibility tree in ~100ms with exact coordinates;
+everything else goes to a local agent — kiro-cli spawned as a stdio JSON-RPC
+subprocess speaking the Agent Client Protocol (ACP), with the active display
+captured (downscaled JPEG) and a compact AX-tree summary attached as context.
+Responses stream: text renders progressively in a cursor-following bubble while
+completed sentences are spoken via on-device AVSpeechSynthesizer (per-sentence
+TTS pipelining). Response modality (Voice + Text / Text only / Voice only) is a
+user preference in the panel. A blue cursor overlay flies to and points at UI
+elements referenced by `[POINT:x,y:label:screenN]` tags.
 
 The app has zero API keys, no proxy server, and no analytics. The upstream
 Cloudflare Worker, PostHog, AssemblyAI, ElevenLabs, OpenAI clients, Sparkle
@@ -28,9 +30,10 @@ mux.com), slated for removal in the rebrand pass.
 - **App Type**: Menu bar-only (`LSUIElement=true`), no dock icon or main window
 - **Framework**: SwiftUI (macOS native) with AppKit bridging for menu bar panel and cursor overlay
 - **Pattern**: MVVM with `@StateObject` / `@Published` state management
-- **AI Chat**: M0 placeholder (`PlaceholderResponseGenerator`) — M1 replaces it with an ACP client (`ACPAgentClient.swift`) speaking JSON-RPC to a local agent CLI subprocess. `ClaudeAPI.swift` is retained on disk as the reference for the seam being replaced but is no longer called.
+- **AI Chat**: `Core/ACPAgentClient.swift` — spawns kiro-cli in ACP mode (stdio JSON-RPC, protocolVersion 1), streams `agent_message_chunk` updates, sends screenshots as image content blocks, rejects tool-permission requests (the assistant is read-only). Instructions ride the first prompt of each session. `ClaudeAPI.swift` is retained on disk as historical reference only.
+- **Routing**: `Core/QuestionRouter.swift` — deterministic rules decide on-device vs agent. Element-location questions resolve locally against the AX tree (`AXTreeProvider.swift`); ambiguity or reasoning delegates to the agent.
 - **Speech-to-Text**: Apple Speech (on-device) via the pluggable transcription-provider layer. Cloud providers (AssemblyAI, OpenAI) were removed in M0; a whisper.cpp-backed provider may be added in M3.
-- **Text-to-Speech**: AVSpeechSynthesizer (on-device) via `LocalSpeechSynthesizerTTSClient.swift` — an M0 stopgap, may be upgraded to a higher-quality local engine in M3
+- **Text-to-Speech**: AVSpeechSynthesizer (on-device) via `LocalSpeechSynthesizerTTSClient.swift`, fed per completed sentence during streaming (`Core/StreamingSentenceSplitter.swift`). May be upgraded to a higher-quality local engine in M3
 - **Screen Capture**: ScreenCaptureKit (macOS 14.2+), multi-monitor support
 - **Voice Input**: Push-to-talk via `AVAudioEngine` + pluggable transcription-provider layer. System-wide keyboard shortcut via listen-only CGEvent tap.
 - **Element Pointing**: The response embeds `[POINT:x,y:label:screenN]` tags. The overlay parses these, maps coordinates to the correct monitor, and animates the blue cursor along a bezier arc to the target.
@@ -56,17 +59,20 @@ mux.com), slated for removal in the rebrand pass.
 | File | Lines | Purpose |
 |------|-------|---------|
 | `leanring_buddyApp.swift` | ~89 | Menu bar app entry point. Uses `@NSApplicationDelegateAdaptor` with `CompanionAppDelegate` which creates `MenuBarPanelManager` and starts `CompanionManager`. No main window — the app lives entirely in the status bar. |
-| `CompanionManager.swift` | ~915 | Central state machine. Owns dictation, shortcut monitoring, screen capture, the response seam (M0 placeholder / M1 ACP agent), on-device TTS, and overlay management. Tracks voice state (idle/listening/processing/responding), conversation history, model selection, and cursor visibility. Coordinates the full push-to-talk → screenshot → response → TTS → pointing pipeline. |
+| `CompanionManager.swift` | ~1030 | Central state machine. Owns dictation, shortcut monitoring, screen capture, the response seam (M0 placeholder / M1 ACP agent), on-device TTS, and overlay management. Tracks voice state (idle/listening/processing/responding), conversation history, model selection, and cursor visibility. Coordinates the full push-to-talk → screenshot → response → TTS → pointing pipeline. |
 | `MenuBarPanelManager.swift` | ~243 | NSStatusItem + custom NSPanel lifecycle. Creates the menu bar icon, manages the floating companion panel (show/hide/position), installs click-outside-to-dismiss monitor. |
-| `CompanionPanelView.swift` | ~714 | SwiftUI panel content for the menu bar dropdown. Shows companion status, push-to-talk instructions, model picker (inert in M0 — becomes the agent picker in M1), permissions UI, DM feedback button, and quit button. Dark aesthetic using `DS` design system. |
+| `CompanionPanelView.swift` | ~845 | SwiftUI panel content for the menu bar dropdown. Shows companion status, push-to-talk instructions, model picker (inert in M0 — becomes the agent picker in M1), permissions UI, DM feedback button, and quit button. Dark aesthetic using `DS` design system. |
 | `OverlayWindow.swift` | ~881 | Full-screen transparent overlay hosting the blue cursor, response text, waveform, and spinner. Handles cursor animation, element pointing with bezier arcs, multi-monitor coordinate mapping, and fade-out transitions. |
-| `CompanionResponseOverlay.swift` | ~217 | SwiftUI view for the response text bubble and waveform displayed next to the cursor in the overlay. |
+| `CompanionResponseOverlay.swift` | ~217 | Cursor-following streaming-text bubble for responses (revived in M1; was dead code upstream). Fed progressively from the ACP chunk stream. |
 | `CompanionScreenCaptureUtility.swift` | ~132 | Multi-monitor screenshot capture using ScreenCaptureKit. Returns labeled image data for each connected display. |
 | `BuddyDictationManager.swift` | ~866 | Push-to-talk voice pipeline. Handles microphone capture via `AVAudioEngine`, provider-aware permission checks, keyboard/button dictation sessions, transcript finalization, shortcut parsing, contextual keyterms, and live audio-level reporting for waveform feedback. |
 | `BuddyTranscriptionProvider.swift` | ~61 | Protocol surface and provider factory for voice transcription backends. Resolves provider based on `VoiceTranscriptionProvider` in Info.plist — Apple Speech only since M0; the mechanism is kept for future local providers. |
 | `AppleSpeechTranscriptionProvider.swift` | ~147 | Local fallback transcription provider backed by Apple's Speech framework. |
-| `LocalSpeechSynthesizerTTSClient.swift` | ~49 | On-device TTS via AVSpeechSynthesizer. M0 stopgap replacing the ElevenLabs client; same call surface (speakText / isPlaying / stopPlayback). |
-| `PlaceholderResponseGenerator.swift` | ~40 | M0 scaffolding filling the response seam with a deterministic local response so the pipeline runs end-to-end offline. Replaced by `ACPAgentClient.swift` in M1. |
+| `LocalSpeechSynthesizerTTSClient.swift` | ~62 | On-device TTS via AVSpeechSynthesizer. `enqueueSentence` queues sentences natively for per-sentence streaming speech. |
+| `Core/ACPAgentClient.swift` | ~407 | ACP client: spawn kiro-cli, initialize/session-new handshake, streaming prompts with image blocks, session/cancel, agent-mode switching, permission-request rejection. PORTABLE CORE (no AppKit). |
+| `Core/QuestionRouter.swift` | ~138 | Deterministic on-device router: extracts locate-targets from transcripts, fuzzy-matches AX element titles, answers locally only on confident unambiguous matches. PORTABLE CORE. |
+| `Core/StreamingSentenceSplitter.swift` | ~93 | Splits streaming text into complete sentences for TTS and holds back partial [POINT tags so they are never spoken or shown. PORTABLE CORE. |
+| `AXTreeProvider.swift` | ~172 | Walks the frontmost app's accessibility tree: RoutableScreenElements with exact AppKit-global coordinates plus a compact text summary for agent context. |
 | `BuddyAudioConversionSupport.swift` | ~108 | Audio conversion helpers. Converts live mic buffers to PCM16 mono audio and builds WAV payloads for upload-based providers. |
 | `GlobalPushToTalkShortcutMonitor.swift` | ~132 | System-wide push-to-talk monitor. Owns the listen-only `CGEvent` tap and publishes press/release transitions. |
 | `ClaudeAPI.swift` | ~291 | UNUSED since M0. Retained as the reference for the request/streaming surface that `ACPAgentClient.swift` replaces in M1. |

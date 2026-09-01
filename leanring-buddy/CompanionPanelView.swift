@@ -12,6 +12,12 @@ import SwiftUI
 
 struct CompanionPanelView: View {
     @ObservedObject var companionManager: CompanionManager
+    @ObservedObject var agentClient: ACPAgentClient
+
+    init(companionManager: CompanionManager) {
+        self.companionManager = companionManager
+        self.agentClient = companionManager.acpAgentClient
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -28,8 +34,12 @@ struct CompanionPanelView: View {
                 Spacer()
                     .frame(height: 12)
 
-                modelPickerRow
-                    .padding(.horizontal, 16)
+                VStack(spacing: 2) {
+                    agentStatusRow
+                    agentPickerRow
+                    responseModalityRow
+                }
+                .padding(.horizontal, 16)
             }
 
             if !companionManager.allPermissionsGranted {
@@ -549,19 +559,94 @@ struct CompanionPanelView: View {
         .padding(.vertical, 4)
     }
 
-    // MARK: - Model Picker
+    // MARK: - Agent Section (replaces the upstream Sonnet/Opus model picker)
 
-    private var modelPickerRow: some View {
+    /// Connection status for the local ACP agent subprocess.
+    private var agentStatusRow: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(agentStatusColor)
+                .frame(width: 7, height: 7)
+            Text(agentStatusText)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(DS.Colors.textTertiary)
+                .lineLimit(2)
+            Spacer()
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var agentStatusColor: Color {
+        switch agentClient.connectionState {
+        case .ready: return Color.green.opacity(0.85)
+        case .launching: return Color.orange.opacity(0.85)
+        case .failed: return Color.red.opacity(0.85)
+        case .notStarted: return Color.gray.opacity(0.6)
+        }
+    }
+
+    private var agentStatusText: String {
+        switch agentClient.connectionState {
+        case .ready: return "Agent connected (kiro-cli)"
+        case .launching: return "Starting agent…"
+        case .failed(let reason): return "Agent unavailable: \(reason)"
+        case .notStarted: return "Agent not started"
+        }
+    }
+
+    /// Picks the agent persona reported by the ACP session's modes.
+    private var agentPickerRow: some View {
         HStack {
-            Text("Model")
+            Text("Agent")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(DS.Colors.textSecondary)
+
+            Spacer()
+
+            Menu {
+                ForEach(agentClient.availableAgentModes) { agentMode in
+                    Button(action: {
+                        Task { await agentClient.setAgentMode(agentMode.id) }
+                    }) {
+                        if agentMode.id == agentClient.currentAgentModeID {
+                            Label(agentMode.name, systemImage: "checkmark")
+                        } else {
+                            Text(agentMode.name)
+                        }
+                    }
+                }
+            } label: {
+                Text(currentAgentModeName)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .lineLimit(1)
+            }
+            .menuStyle(.borderlessButton)
+            .frame(maxWidth: 150)
+            .pointerCursor()
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var currentAgentModeName: String {
+        guard let currentModeID = agentClient.currentAgentModeID else { return "default" }
+        return agentClient.availableAgentModes.first { $0.id == currentModeID }?.name ?? currentModeID
+    }
+
+    // MARK: - Response Modality (UX baseline D2, layer 1)
+
+    private var responseModalityRow: some View {
+        HStack {
+            Text("Respond with")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(DS.Colors.textSecondary)
 
             Spacer()
 
             HStack(spacing: 0) {
-                modelOptionButton(label: "Sonnet", modelID: "claude-sonnet-4-6")
-                modelOptionButton(label: "Opus", modelID: "claude-opus-4-6")
+                ForEach(CompanionManager.ResponseModalityPreference.allCases, id: \.rawValue) { modality in
+                    modalityOptionButton(modality)
+                }
             }
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -575,15 +660,15 @@ struct CompanionPanelView: View {
         .padding(.vertical, 4)
     }
 
-    private func modelOptionButton(label: String, modelID: String) -> some View {
-        let isSelected = companionManager.selectedModel == modelID
+    private func modalityOptionButton(_ modality: CompanionManager.ResponseModalityPreference) -> some View {
+        let isSelected = companionManager.responseModality == modality
         return Button(action: {
-            companionManager.setSelectedModel(modelID)
+            companionManager.setResponseModality(modality)
         }) {
-            Text(label)
-                .font(.system(size: 11, weight: .medium))
+            Text(modality.displayLabel)
+                .font(.system(size: 10, weight: .medium))
                 .foregroundColor(isSelected ? DS.Colors.textPrimary : DS.Colors.textTertiary)
-                .padding(.horizontal, 10)
+                .padding(.horizontal, 7)
                 .padding(.vertical, 5)
                 .background(
                     RoundedRectangle(cornerRadius: 5, style: .continuous)

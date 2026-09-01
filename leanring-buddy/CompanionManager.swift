@@ -72,6 +72,46 @@ final class CompanionManager: ObservableObject {
     /// dependency. May be upgraded to a higher-quality local engine in M3.
     private let localTTSClient = LocalSpeechSynthesizerTTSClient()
 
+    /// The local agent (kiro-cli in ACP mode) that generates responses.
+    /// Replaced the M0 placeholder and the upstream ClaudeAPI + worker seam.
+    let acpAgentClient = ACPAgentClient()
+
+    /// Accessibility-tree extraction for the frontmost app (M2): exact
+    /// element coordinates for local pointing plus compact agent context.
+    private let axTreeProvider = AXTreeProvider()
+
+    /// Cursor-following streaming text bubble for responses (UX baseline D1:
+    /// text is the primary record; audio is a preference).
+    private let responseTextOverlayManager = CompanionResponseOverlayManager()
+
+    // MARK: - Response Modality (UX baseline D2, layer 1)
+
+    enum ResponseModalityPreference: String, CaseIterable {
+        case voiceAndText
+        case textOnly
+        case voiceOnly
+
+        var displayLabel: String {
+            switch self {
+            case .voiceAndText: return "Voice + Text"
+            case .textOnly: return "Text only"
+            case .voiceOnly: return "Voice only"
+            }
+        }
+    }
+
+    /// How responses are delivered. Persisted to UserDefaults.
+    @Published var responseModality: ResponseModalityPreference =
+        ResponseModalityPreference(rawValue: UserDefaults.standard.string(forKey: "responseModality") ?? "") ?? .voiceAndText
+
+    func setResponseModality(_ modality: ResponseModalityPreference) {
+        responseModality = modality
+        UserDefaults.standard.set(modality.rawValue, forKey: "responseModality")
+    }
+
+    var isTextResponseEnabled: Bool { responseModality != .voiceOnly }
+    var isVoiceResponseEnabled: Bool { responseModality != .textOnly }
+
     /// Conversation history so Claude remembers prior exchanges within a session.
     /// Each entry is the user's transcript and Claude's response.
     private var conversationHistory: [(userTranscript: String, assistantResponse: String)] = []
@@ -98,16 +138,6 @@ final class CompanionManager: ObservableObject {
     /// Whether the blue cursor overlay is currently visible on screen.
     /// Used by the panel to show accurate status text ("Active" vs "Ready").
     @Published private(set) var isOverlayVisible: Bool = false
-
-    /// The model the panel picker selects. Persisted to UserDefaults. In M0
-    /// this preference has no effect (the placeholder responder ignores it);
-    /// M1 replaces the Sonnet/Opus picker with an ACP agent picker.
-    @Published var selectedModel: String = UserDefaults.standard.string(forKey: "selectedClaudeModel") ?? "claude-sonnet-4-6"
-
-    func setSelectedModel(_ model: String) {
-        selectedModel = model
-        UserDefaults.standard.set(model, forKey: "selectedClaudeModel")
-    }
 
     /// User preference for whether the Clicky cursor should be shown.
     /// When toggled off, the overlay is hidden and push-to-talk is disabled.
@@ -146,6 +176,11 @@ final class CompanionManager: ObservableObject {
         bindVoiceStateObservation()
         bindAudioPowerLevel()
         bindShortcutTransitions()
+
+        // Warm up the agent subprocess in the background so the first
+        // push-to-talk doesn't pay the spawn + handshake cost.
+        acpAgentClient.instructionBlock = Self.acpInstructionBlock
+        Task { await acpAgentClient.start() }
 
         // If the user already completed onboarding AND all permissions are
         // still granted, show the cursor overlay immediately. If permissions
@@ -253,6 +288,8 @@ final class CompanionManager: ObservableObject {
         globalPushToTalkShortcutMonitor.stop()
         buddyDictationManager.cancelCurrentDictation()
         overlayWindowManager.hideOverlay()
+        responseTextOverlayManager.hideOverlay()
+        acpAgentClient.stop()
         transientHideTask?.cancel()
 
         currentResponseTask?.cancel()
@@ -450,7 +487,9 @@ final class CompanionManager: ObservableObject {
 
             // Cancel any in-progress response and TTS from a previous utterance
             currentResponseTask?.cancel()
+            acpAgentClient.cancelActivePrompt()
             localTTSClient.stopPlayback()
+            responseTextOverlayManager.hideOverlay()
             clearDetectedElementLocation()
 
             // Dismiss the onboarding prompt if it's showing
@@ -495,39 +534,31 @@ final class CompanionManager: ObservableObject {
 
     // MARK: - Companion Prompt
 
-    private static let companionVoiceResponseSystemPrompt = """
-    you're clicky, a friendly always-on companion that lives in the user's menu bar. the user just spoke to you via push-to-talk and you can see their screen(s). your reply will be spoken aloud via text-to-speech, so write the way you'd actually talk. this is an ongoing conversation — you remember everything they've said before.
+    /// Instructions prepended to the FIRST prompt of each agent session (ACP
+    /// has no system-prompt parameter). The persistent session remembers them
+    /// for every later turn. Adapted from the upstream voice system prompt.
+    private static let acpInstructionBlock = """
+    you're clicky, a friendly always-on companion that lives in the user's menu bar on their mac. the user speaks to you via push-to-talk and you can see their screen. your reply may be spoken aloud via text-to-speech and shown as text next to their cursor. this is an ongoing conversation — you remember everything they've said before.
 
     rules:
-    - default to one or two sentences. be direct and dense. BUT if the user asks you to explain more, go deeper, or elaborate, then go all out — give a thorough, detailed explanation with no length limit.
-    - all lowercase, casual, warm. no emojis.
-    - write for the ear, not the eye. short sentences. no lists, bullet points, markdown, or formatting — just natural speech.
-    - don't use abbreviations or symbols that sound weird read aloud. write "for example" not "e.g.", spell out small numbers.
-    - if the user's question relates to what's on their screen, reference specific things you see.
-    - if the screenshot doesn't seem relevant to their question, just answer the question directly.
-    - you can help with anything — coding, writing, general knowledge, brainstorming.
-    - never say "simply" or "just".
-    - don't read out code verbatim. describe what the code does or what needs to change conversationally.
-    - focus on giving a thorough, useful explanation. don't end with simple yes/no questions like "want me to explain more?" or "should i show you?" — those are dead ends that force the user to just say yes.
-    - instead, when it fits naturally, end by planting a seed — mention something bigger or more ambitious they could try, a related concept that goes deeper, or a next-level technique that builds on what you just explained. make it something worth coming back for, not a question they'd just nod to. it's okay to not end with anything extra if the answer is complete on its own.
-    - if you receive multiple screen images, the one labeled "primary focus" is where the cursor is — prioritize that one but reference others if relevant.
+    - IMPORTANT: never use tools. answer directly from the message, the images, and the context you're given. tool permission requests will be rejected.
+    - default to one or two sentences. be direct and dense. if the user asks you to explain more or go deeper, give a thorough explanation.
+    - all lowercase, casual, warm. no emojis. no markdown, no lists, no formatting — just natural speech, short sentences.
+    - don't use abbreviations that sound weird read aloud. write "for example" not "e.g.", spell out small numbers.
+    - if the user's question relates to what's on their screen, reference specific things you see. if the screenshot isn't relevant, just answer the question.
+    - never say "simply" or "just". don't read code verbatim — describe it conversationally.
+    - a [context] section may follow the user's words with image labels and a list of accessibility elements from the frontmost app. use the element names to be precise about what's on screen.
 
     element pointing:
-    you have a small blue triangle cursor that can fly to and point at things on screen. use it whenever pointing would genuinely help the user — if they're asking how to do something, looking for a menu, trying to find a button, or need help navigating an app, point at the relevant element. err on the side of pointing rather than not pointing, because it makes your help way more useful and concrete.
+    you have a small blue triangle cursor that can fly to and point at things on screen. point whenever it would genuinely help — finding a menu, a button, navigating an app. don't point for general knowledge questions.
 
-    don't point at things when it would be pointless — like if the user asks a general knowledge question, or the conversation has nothing to do with what's on screen, or you'd just be pointing at something obvious they're already looking at. but if there's a specific UI element, menu, button, or area on screen that's relevant to what you're helping with, point at it.
+    when you point, append a coordinate tag at the very end of your response, after your spoken text. the screenshot images are labeled with their pixel dimensions — your coordinates MUST be integer pixel coordinates in that image's coordinate space, origin top-left. the accessibility element coordinates in [context] are a different coordinate space; use them only to identify elements by name, never copy them into the tag.
 
-    when you point, append a coordinate tag at the very end of your response, AFTER your spoken text. the screenshot images are labeled with their pixel dimensions. use those dimensions as the coordinate space. the origin (0,0) is the top-left corner of the image. x increases rightward, y increases downward.
-
-    format: [POINT:x,y:label] where x,y are integer pixel coordinates in the screenshot's coordinate space, and label is a short 1-3 word description of the element (like "search bar" or "save button"). if the element is on the cursor's screen you can omit the screen number. if the element is on a DIFFERENT screen, append :screenN where N is the screen number from the image label (e.g. :screen2). this is important — without the screen number, the cursor will point at the wrong place.
-
-    if pointing wouldn't help, append [POINT:none].
+    format: [POINT:x,y:label] where label is a short 1-3 word description. if the element is on a different screen than the cursor, append :screenN using the screen number from the image label. if pointing wouldn't help, append [POINT:none].
 
     examples:
-    - user asks how to color grade in final cut: "you'll want to open the color inspector — it's right up in the top right area of the toolbar. click that and you'll get all the color wheels and curves. [POINT:1100,42:color inspector]"
-    - user asks what html is: "html stands for hypertext markup language, it's basically the skeleton of every web page. curious how it connects to the css you're looking at? [POINT:none]"
-    - user asks how to commit in xcode: "see that source control menu up top? click that and hit commit, or you can use command option c as a shortcut. [POINT:285,11:source control]"
-    - element is on screen 2 (not where cursor is): "that's over on your other monitor — see the terminal window? [POINT:400,300:terminal:screen2]"
+    - "you'll want the color inspector — top right of the toolbar. [POINT:1100,42:color inspector]"
+    - "html is the skeleton of every web page. [POINT:none]"
     """
 
     // MARK: - AI Response Pipeline
@@ -546,33 +577,95 @@ final class CompanionManager: ObservableObject {
         localTTSClient.stopPlayback()
 
         currentResponseTask = Task {
-            // Stay in processing (spinner) state — no streaming text displayed
             voiceState = .processing
 
+            // M2 router: element-location questions ("where is the save
+            // button") are answered from the accessibility tree in ~100ms
+            // with exact coordinates, never touching the agent.
+            let axSnapshot = axTreeProvider.snapshotFrontmostApplication()
+            if let axSnapshot,
+               case .answerLocally(let spokenText, let element) = QuestionRouter.route(
+                   transcript: transcript,
+                   screenElements: axSnapshot.elements
+               ) {
+                deliverLocalPointingAnswer(spokenText: spokenText, element: element, transcript: transcript)
+                return
+            }
+
             do {
-                // Capture all connected screens so the assistant has full
-                // context. Still exercised in M0 (even though the placeholder
-                // only counts the screens) so the capture path and Screen
-                // Recording permission flow stay tested end-to-end.
-                let screenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
+                // M2 capture discipline: active display only, downscaled.
+                // Less of the screen leaves the machine, smaller agent payload.
+                let screenCaptures = try await CompanionScreenCaptureUtility.captureScreensAsJPEG(activeDisplayOnly: true)
 
                 guard !Task.isCancelled else { return }
 
-                // M1 SEAM: ACPAgentClient.sendPrompt(transcript:images:history:)
-                // replaces this call, streaming session/update chunks into the
-                // same parse-then-speak path below.
-                let fullResponseText = PlaceholderResponseGenerator.makeResponse(
-                    forTranscript: transcript,
-                    capturedScreenCount: screenCaptures.count
-                )
+                // Pre-digest context for the agent: image labels with pixel
+                // dimensions (the POINT coordinate space) plus the compact
+                // accessibility summary so it can name elements precisely.
+                let imageLabelLines = screenCaptures.map { capture in
+                    "image: \(capture.label) (image dimensions: \(capture.screenshotWidthInPixels)x\(capture.screenshotHeightInPixels) pixels)"
+                }
+                var promptText = transcript + "\n\n[context]\n" + imageLabelLines.joined(separator: "\n")
+                if let axSnapshot {
+                    promptText += "\n\naccessibility elements on the frontmost app (names are reliable; coordinates are for reference only, never for POINT tags):\n"
+                        + String(axSnapshot.compactSummary.prefix(3000))
+                }
+
+                let promptImages = screenCaptures.map { capture in
+                    ACPPromptImage(base64Data: capture.imageData.base64EncodedString(), mimeType: "image/jpeg")
+                }
+
+                // Stream the response: text renders progressively in the
+                // cursor bubble, and completed sentences are spoken while the
+                // rest is still arriving (per-sentence TTS pipelining).
+                var sentenceSplitter = StreamingSentenceSplitter()
+                var accumulatedResponseText = ""
+                var hasStartedDelivering = false
+
+                let fullResponseText = try await acpAgentClient.sendPrompt(
+                    text: promptText,
+                    images: promptImages
+                ) { [weak self] chunkText in
+                    guard let self, !Task.isCancelled else { return }
+                    accumulatedResponseText += chunkText
+
+                    if !hasStartedDelivering {
+                        hasStartedDelivering = true
+                        self.voiceState = .responding
+                        if self.isTextResponseEnabled {
+                            self.responseTextOverlayManager.showOverlayAndBeginStreaming()
+                        }
+                    }
+                    if self.isTextResponseEnabled {
+                        self.responseTextOverlayManager.updateStreamingText(
+                            StreamingSentenceSplitter.textWithoutTrailingPartialTag(accumulatedResponseText)
+                        )
+                    }
+                    if self.isVoiceResponseEnabled {
+                        for completedSentence in sentenceSplitter.ingestChunk(chunkText) {
+                            self.localTTSClient.enqueueSentence(completedSentence)
+                        }
+                    }
+                }
 
                 guard !Task.isCancelled else { return }
 
-                // Parse the [POINT:...] tag from the response
+                // Parse the [POINT:...] tag from the full response
                 let parseResult = Self.parsePointingCoordinates(from: fullResponseText)
                 let spokenText = parseResult.spokenText
 
-                // Handle element pointing if Claude returned coordinates.
+                // Speak whatever the sentence splitter is still holding.
+                if isVoiceResponseEnabled, let remainderText = sentenceSplitter.flushRemainder() {
+                    localTTSClient.enqueueSentence(remainderText)
+                }
+                // Settle the bubble on the final tag-free text, then let it
+                // auto-hide a few seconds later.
+                if isTextResponseEnabled && hasStartedDelivering {
+                    responseTextOverlayManager.updateStreamingText(spokenText)
+                    responseTextOverlayManager.finishStreaming()
+                }
+
+                // Handle element pointing if the agent returned coordinates.
                 // Switch to idle BEFORE setting the location so the triangle
                 // becomes visible and can fly to the target. Without this, the
                 // spinner hides the triangle and the flight animation is invisible.
@@ -581,7 +674,7 @@ final class CompanionManager: ObservableObject {
                     voiceState = .idle
                 }
 
-                // Pick the screen capture matching Claude's screen number,
+                // Pick the screen capture matching the agent's screen number,
                 // falling back to the cursor screen if not specified.
                 let targetScreenCapture: CompanionScreenCapture? = {
                     if let screenNumber = parseResult.screenNumber,
@@ -593,9 +686,9 @@ final class CompanionManager: ObservableObject {
 
                 if let pointCoordinate = parseResult.coordinate,
                    let targetScreenCapture {
-                    // Claude's coordinates are in the screenshot's pixel space
-                    // (top-left origin, e.g. 1280x831). Scale to the display's
-                    // point space (e.g. 1512x982), then convert to AppKit global coords.
+                    // The agent's coordinates are in the screenshot's pixel
+                    // space (top-left origin, e.g. 1280x831). Scale to the
+                    // display's point space, then convert to AppKit global coords.
                     let screenshotWidth = CGFloat(targetScreenCapture.screenshotWidthInPixels)
                     let screenshotHeight = CGFloat(targetScreenCapture.screenshotHeightInPixels)
                     let displayWidth = CGFloat(targetScreenCapture.displayWidthInPoints)
@@ -626,44 +719,69 @@ final class CompanionManager: ObservableObject {
                     print("🎯 Element pointing: \(parseResult.elementLabel ?? "no element")")
                 }
 
-                // Save this exchange to conversation history (with the point tag
-                // stripped so it doesn't confuse future context)
-                conversationHistory.append((
-                    userTranscript: transcript,
-                    assistantResponse: spokenText
-                ))
-
-                // Keep only the last 10 exchanges to avoid unbounded context growth
-                if conversationHistory.count > 10 {
-                    conversationHistory.removeFirst(conversationHistory.count - 10)
-                }
-
-                print("🧠 Conversation history: \(conversationHistory.count) exchanges")
-
-
-                // Play the response via TTS. Keep the spinner (processing state)
-                // until the audio actually starts playing, then switch to responding.
-                if !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    do {
-                        try await localTTSClient.speakText(spokenText)
-                        // speakText returns after player.play() — audio is now playing
-                        voiceState = .responding
-                    } catch {
-                        print("⚠️ Local TTS error: \(error)")
-                        speakResponseErrorFallback()
-                    }
-                }
+                appendToConversationHistory(userTranscript: transcript, assistantResponse: spokenText)
             } catch is CancellationError {
                 // User spoke again — response was interrupted
             } catch {
                 print("⚠️ Companion response error: \(error)")
-                speakResponseErrorFallback()
+                deliverErrorResponse(error)
             }
 
             if !Task.isCancelled {
                 voiceState = .idle
                 scheduleTransientHideIfNeeded()
             }
+        }
+    }
+
+    /// Delivers a router-answered element-location response: exact-coordinate
+    /// pointing plus text/speech per the modality preference. No agent, no
+    /// capture, no network — this is the ~100ms path.
+    private func deliverLocalPointingAnswer(
+        spokenText: String,
+        element: RoutableScreenElement,
+        transcript: String
+    ) {
+        print("🎯 Router: local answer, pointing at \"\(element.title)\" at \(element.centerPoint)")
+
+        // Idle first so the triangle is visible for the flight animation.
+        voiceState = .idle
+
+        // The pointer bubble carries the answer (UX baseline D3).
+        detectedElementBubbleText = spokenText
+        detectedElementScreenLocation = element.centerPoint
+        detectedElementDisplayFrame = element.displayFrame
+
+        if isVoiceResponseEnabled {
+            localTTSClient.enqueueSentence(spokenText)
+        }
+
+        appendToConversationHistory(userTranscript: transcript, assistantResponse: spokenText)
+        scheduleTransientHideIfNeeded()
+    }
+
+    /// Shows and/or speaks a pipeline error per the modality preference. The
+    /// bubble gets the specific reason (readable, actionable); speech gets a
+    /// short generic line.
+    private func deliverErrorResponse(_ error: Error) {
+        if isTextResponseEnabled {
+            responseTextOverlayManager.showOverlayAndBeginStreaming()
+            responseTextOverlayManager.updateStreamingText("hmm, that didn't work: \(error.localizedDescription)")
+            responseTextOverlayManager.finishStreaming()
+        }
+        if isVoiceResponseEnabled {
+            localTTSClient.enqueueSentence("something went wrong while answering. try asking again.")
+        }
+        voiceState = .responding
+    }
+
+    private func appendToConversationHistory(userTranscript: String, assistantResponse: String) {
+        conversationHistory.append((userTranscript: userTranscript, assistantResponse: assistantResponse))
+        // Keep only the last 10 exchanges to avoid unbounded growth. (The
+        // agent session holds its own history; this copy exists for a future
+        // transcript view.)
+        if conversationHistory.count > 10 {
+            conversationHistory.removeFirst(conversationHistory.count - 10)
         }
     }
 
@@ -695,16 +813,6 @@ final class CompanionManager: ObservableObject {
             overlayWindowManager.fadeOutAndHideOverlay()
             isOverlayVisible = false
         }
-    }
-
-    /// Speaks a hardcoded error message using NSSpeechSynthesizer when the
-    /// response pipeline fails. Uses a separate synthesizer from the main
-    /// TTS client so this still works if the primary speech path is what broke.
-    private func speakResponseErrorFallback() {
-        let utterance = "something went wrong while answering. try asking again."
-        let synthesizer = NSSpeechSynthesizer()
-        synthesizer.startSpeaking(utterance)
-        voiceState = .responding
     }
 
     // MARK: - Point Tag Parsing
