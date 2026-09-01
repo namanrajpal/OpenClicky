@@ -39,6 +39,8 @@ mux.com), slated for removal in the rebrand pass.
 
 ### Key Architecture Decisions
 
+**UX baseline**: `docs/UX-BASELINE.md` records the current interaction model, the response-modality rules, and the proposed baseline decisions (text-first output, three-layer modality control). Consult it before changing any user-facing behavior; update it when a Section 6 decision ships.
+
 **Menu Bar Panel Pattern**: The companion panel uses `NSStatusItem` for the menu bar icon and a custom borderless `NSPanel` for the floating control panel. This gives full control over appearance (dark, rounded corners, custom shadow) and avoids the standard macOS menu/popover chrome. The panel is non-activating so it doesn't steal focus. A global event monitor auto-dismisses it on outside clicks.
 
 **Cursor Overlay**: A full-screen transparent `NSPanel` hosts the blue cursor companion. It's non-activating, joins all Spaces, and never steals focus. The cursor position, response text, waveform, and pointing animations all render in this overlay via SwiftUI through `NSHostingView`.
