@@ -1,162 +1,148 @@
-Update: April 27, 2026.
+# OpenClicky
 
-Hi there! I'm Farza, the guy that made Clicky.
+A voice companion for macOS that lives next to your cursor. Hold a hotkey,
+ask about anything on your screen, and it answers out loud, in streaming text,
+and by flying a little blue cursor over to point at things.
 
-The existing codebase remains open source. Tinker with it, make it yours, start a company out of it, do whatever you want I don't mind. But, for all the new stuff I'm hacking on, gonna keep it private. To get the latest Clicky, you can go [here](https://www.heyclicky.com/).
+OpenClicky is local-first. Speech recognition runs on-device, speech output
+runs on-device by default, and the AI brain is a local agent CLI you already
+have; the app itself holds zero API keys and opens zero network connections
+of its own.
 
-I also tweeted about this [here](https://x.com/FarzaTV/status/2043402737828962489).
+## What it does
 
-Go crazy with this repo!! It's an MIT license.
+- **Push-to-talk**: hold `ctrl + option` anywhere, speak, release. A waveform
+  replaces the cursor buddy while you talk.
+- **Sees your screen**: on release it captures the active display (downscaled,
+  only while the key is held) and sends it to the agent with your question.
+- **Answers three ways**: streaming text in a bubble that follows your cursor,
+  spoken sentences that start playing while the rest is still generating, and
+  a pointer flight: the blue triangle flies to the relevant UI element and
+  sketches a hand-drawn circle around it.
+- **Lasso a region**: while holding the hotkey, click-drag a loop around part
+  of your screen. Only that region's bounding box is captured and your
+  question is answered about exactly that area.
+- **Instant local answers**: "where is the save button" never touches the
+  agent. A deterministic router reads the frontmost app's accessibility tree
+  and points at the exact coordinates in about 100 ms.
+- **Copy the answer**: `ctrl + option + C` copies the last response.
 
-# Hi, this is Clicky.
-It's an AI teacher that lives as a buddy next to your cursor. It can see your screen, talk to you, and even point at stuff. Kinda like having a real teacher next to you.
-
-Download it [here](https://www.clicky.so/) for free.
-
-Here's the [original tweet](https://x.com/FarzaTV/status/2041314633978659092) that kinda blew up for a demo for more context.
-
-![Clicky — an ai buddy that lives on your mac](clicky-demo.gif)
-
-This is the open-source version of Clicky for those that want to hack on it, build their own features, or just see how it works under the hood.
-
-## Get started with Claude Code
-
-The fastest way to get this running is with [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
-
-Once you get Claude running, paste this:
+## How it works
 
 ```
-Hi Claude.
-
-Clone https://github.com/farzaa/clicky.git into my current directory.
-
-Then read the CLAUDE.md. I want to get Clicky running locally on my Mac.
-
-Help me set up everything — the Cloudflare Worker with my own API keys, the proxy URLs, and getting it building in Xcode. Walk me through it.
+hold ctrl+option ──▶ mic ──▶ Apple Speech (on-device STT)
+                                   │
+                        ┌──────────▼──────────┐
+                        │  deterministic router │── element question? ──▶ AX tree lookup,
+                        └──────────┬──────────┘                          exact-coordinate pointing
+                                   │ everything else
+                                   ▼
+                  active display (or lasso region) captured
+                                   │
+                                   ▼
+                 local agent: kiro-cli spawned as a subprocess
+                 speaking the Agent Client Protocol (JSON-RPC
+                 over stdio, image content blocks, streaming)
+                                   │
+                                   ▼
+              text streams into the cursor bubble, sentences are
+              spoken as they complete, and a trailing [POINT:x,y]
+              tag flies the cursor to the referenced element
 ```
 
-That's it. It'll clone the repo, read the docs, and walk you through the whole setup. Once you're running you can just keep talking to it — build features, fix bugs, whatever. Go crazy.
+The agent brings its own auth and model access. A persistent session holds
+conversation memory, so follow-ups just work. The app installs a dedicated
+agent persona (`~/.kiro/agents/openclicky.json`) automatically: no tools, no
+MCP servers, which keeps session startup fast and makes a spoken question
+incapable of side effects.
 
-## Manual setup
+## Requirements
 
-If you want to do it yourself, here's the deal.
+- macOS 14.2 or later (ScreenCaptureKit)
+- Xcode 15 or later
+- [Kiro CLI](https://kiro.dev/cli/) installed and authenticated
+  (`kiro-cli chat` should work in your terminal)
 
-### Prerequisites
-
-- macOS 14.2+ (for ScreenCaptureKit)
-- Xcode 15+
-- Node.js 18+ (for the Cloudflare Worker)
-- A [Cloudflare](https://cloudflare.com) account (free tier works)
-- API keys for: [Anthropic](https://console.anthropic.com), [AssemblyAI](https://www.assemblyai.com), [ElevenLabs](https://elevenlabs.io)
-
-### 1. Set up the Cloudflare Worker
-
-The Worker is a tiny proxy that holds your API keys. The app talks to the Worker, the Worker talks to the APIs. This way your keys never ship in the app binary.
+## Setup
 
 ```bash
-cd worker
-npm install
-```
-
-Now add your secrets. Wrangler will prompt you to paste each one:
-
-```bash
-npx wrangler secret put ANTHROPIC_API_KEY
-npx wrangler secret put ASSEMBLYAI_API_KEY
-npx wrangler secret put ELEVENLABS_API_KEY
-```
-
-For the ElevenLabs voice ID, open `wrangler.toml` and set it there (it's not sensitive):
-
-```toml
-[vars]
-ELEVENLABS_VOICE_ID = "your-voice-id-here"
-```
-
-Deploy it:
-
-```bash
-npx wrangler deploy
-```
-
-It'll give you a URL like `https://your-worker-name.your-subdomain.workers.dev`. Copy that.
-
-### 2. Run the Worker locally (for development)
-
-If you want to test changes to the Worker without deploying:
-
-```bash
-cd worker
-npx wrangler dev
-```
-
-This starts a local server (usually `http://localhost:8787`) that behaves exactly like the deployed Worker. You'll need to create a `.dev.vars` file in the `worker/` directory with your keys:
-
-```
-ANTHROPIC_API_KEY=sk-ant-...
-ASSEMBLYAI_API_KEY=...
-ELEVENLABS_API_KEY=...
-ELEVENLABS_VOICE_ID=...
-```
-
-Then update the proxy URLs in the Swift code to point to `http://localhost:8787` instead of the deployed Worker URL while developing. Grep for `clicky-proxy` to find them all.
-
-### 3. Update the proxy URLs in the app
-
-The app has the Worker URL hardcoded in a few places. Search for `your-worker-name.your-subdomain.workers.dev` and replace it with your Worker URL:
-
-```bash
-grep -r "clicky-proxy" leanring-buddy/
-```
-
-You'll find it in:
-- `CompanionManager.swift` — Claude chat + ElevenLabs TTS
-- `AssemblyAIStreamingTranscriptionProvider.swift` — AssemblyAI token endpoint
-
-### 4. Open in Xcode and run
-
-```bash
+git clone https://github.com/namanrajpal/OpenClicky.git
+cd OpenClicky
 open leanring-buddy.xcodeproj
 ```
 
-In Xcode:
-1. Select the `leanring-buddy` scheme (yes, the typo is intentional, long story)
-2. Set your signing team under Signing & Capabilities
-3. Hit **Cmd + R** to build and run
+In Xcode: select the `leanring-buddy` scheme, set your signing team under
+Signing & Capabilities, and hit Cmd+R. (The scheme and directory keep an
+inherited misspelling; renaming them churns the project file and is on the
+roadmap.)
 
-The app will appear in your menu bar (not the dock). Click the icon to open the panel, grant the permissions it asks for, and you're good.
+On first run the app lives in your menu bar. Open the panel from the blue
+triangle icon and grant the four permissions it asks for: microphone,
+speech recognition, accessibility, and screen recording. Screen recording
+takes effect after relaunching the app once. Capture happens only while you
+hold the hotkey.
 
-### Permissions the app needs
+### Optional: cloud text-to-speech
 
-- **Microphone** — for push-to-talk voice capture
-- **Accessibility** — for the global keyboard shortcut (Control + Option)
-- **Screen Recording** — for taking screenshots when you use the hotkey
-- **Screen Content** — for ScreenCaptureKit access
-
-## Architecture
-
-If you want the full technical breakdown, read `CLAUDE.md`. But here's the short version:
-
-**Menu bar app** (no dock icon) with two `NSPanel` windows — one for the control panel dropdown, one for the full-screen transparent cursor overlay. Push-to-talk streams audio over a websocket to AssemblyAI, sends the transcript + screenshot to Claude via streaming SSE, and plays the response through ElevenLabs TTS. Claude can embed `[POINT:x,y:label:screenN]` tags in its responses to make the cursor fly to specific UI elements across multiple monitors. All three APIs are proxied through a Cloudflare Worker.
-
-## Project structure
+The default voice is the on-device system synthesizer. For a nicer voice,
+create a `.env` file next to the project (it is gitignored):
 
 ```
-leanring-buddy/          # Swift source (yes, the typo stays)
-  CompanionManager.swift    # Central state machine
-  CompanionPanelView.swift  # Menu bar panel UI
-  ClaudeAPI.swift           # Claude streaming client
-  ElevenLabsTTSClient.swift # Text-to-speech playback
-  OverlayWindow.swift       # Blue cursor overlay
-  AssemblyAI*.swift         # Real-time transcription
-  BuddyDictation*.swift     # Push-to-talk pipeline
-worker/                  # Cloudflare Worker proxy
-  src/index.ts              # Three routes: /chat, /tts, /transcribe-token
-CLAUDE.md                # Full architecture doc (agents read this)
+CARTESIA_API_KEY=...        # Cartesia Sonic, default when present
+DEEPGRAM_API_KEY=...        # Deepgram Aura, alternative
+OPENCLICKY_TTS_PROVIDER=cartesia
 ```
 
-## Contributing
+Sentences fall back to the local voice automatically if a fetch fails.
 
-PRs welcome. If you're using Claude Code, it already knows the codebase — just tell it what you want to build and point it at `CLAUDE.md`.
+## Controls
 
-Got feedback? DM me on X [@farzatv](https://x.com/farzatv).
+| Where | Action | Result |
+|---|---|---|
+| anywhere | hold `ctrl + option`, speak, release | ask about your screen |
+| anywhere | click-drag while holding the hotkey | lasso a region for the question |
+| anywhere | press the hotkey again mid-response | interrupt and ask something new |
+| anywhere | `ctrl + option + C` | copy the last response |
+| menu bar panel | agent picker | switch which agent answers |
+| menu bar panel | respond with Voice + Text / Text only / Voice only | output preference |
+| menu bar panel | show cursor buddy toggle | off = buddy appears only during interactions |
+
+## Project layout
+
+```
+leanring-buddy/
+├── Core/                          portable core (no AppKit)
+│   ├── ACPAgentClient.swift          agent subprocess, ACP JSON-RPC, streaming
+│   ├── QuestionRouter.swift          on-device vs agent routing rules
+│   └── StreamingSentenceSplitter.swift  per-sentence TTS + tag holdback
+├── CompanionManager.swift         central state machine and pipeline
+├── OverlayWindow.swift            cursor buddy, pointing flight, pen circle, lasso stroke
+├── CompanionResponseOverlay.swift streaming text bubble
+├── AXTreeProvider.swift           accessibility tree extraction
+├── LassoRegionSelectionController.swift  region-select drag capture
+├── CompanionScreenCaptureUtility.swift   ScreenCaptureKit capture and crops
+├── CloudSentenceTTSClient.swift   optional Cartesia / Deepgram voices
+├── BuddyDictationManager.swift    mic pipeline and push-to-talk sessions
+└── CompanionPanelView.swift       menu bar panel UI
+```
+
+More depth:
+
+- `AGENTS.md`: architecture doc for AI coding agents (and humans)
+- `docs/UX-BASELINE.md`: the interaction model and every UX decision
+- `docs/reference/kiro-cli.md`: the ACP wire protocol as verified live
+- `docs/plans/`: roadmap and design sketches (guided multi-step tasks)
+
+## Privacy
+
+Nothing runs in the background. A screenshot is taken only while the hotkey
+is held, covers only the active display (or your lasso region), and goes only
+to the local agent process. The app has no analytics, no auto-updater, and no
+network code of its own; optional cloud TTS is the single exception and only
+when you provide keys.
+
+## License
+
+MIT. See [LICENSE](LICENSE). OpenClicky began from the MIT-licensed
+[clicky](https://github.com/farzaa/clicky) codebase and has since replaced
+its cloud pipeline with the local-first architecture described above.
