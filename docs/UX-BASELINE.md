@@ -32,8 +32,9 @@ UX surfaces
 │   ├── feedback button, Watch Onboarding Again, Quit
 │   └── "Show Clicky" cursor toggle: implemented but commented out upstream
 └── Onboarding (first launch)    panel auto-opens → permissions → Start
-    → intro video (mux.com) with music → typed-out prompt:
-      "press control + option and introduce yourself"
+    → welcome bubble → four instruction lines streamed in the cursor
+      bubble (offline, replaces the upstream mux video; hotkey works
+      throughout and skips straight to the real interaction)
 ```
 
 ## 2. The interaction loop (current)
