@@ -72,6 +72,20 @@ final class CompanionManager: ObservableObject {
     /// text is the primary record; audio is a preference).
     private let responseTextOverlayManager = CompanionResponseOverlayManager()
 
+    // MARK: - Lasso Region Selection (input-side drawing)
+
+    /// Drag-to-select while holding push-to-talk: the lasso's bounding
+    /// rectangle replaces the whole-display capture for that question.
+    private let lassoSelectionController = LassoRegionSelectionController()
+
+    /// Live lasso stroke in global AppKit coordinates, rendered by
+    /// BlueCursorView while the user drags. Empty when no drag is happening.
+    @Published var lassoStrokePoints: [CGPoint] = []
+
+    /// The finished selection's bounding rect (global AppKit), consumed by
+    /// the next response pipeline run and then cleared.
+    private var pendingSelectedRegionRect: CGRect?
+
     // MARK: - Response Modality (UX baseline D2, layer 1)
 
     enum ResponseModalityPreference: String, CaseIterable {
@@ -109,6 +123,7 @@ final class CompanionManager: ObservableObject {
     private var currentResponseTask: Task<Void, Never>?
 
     private var shortcutTransitionCancellable: AnyCancellable?
+    private var copyShortcutCancellable: AnyCancellable?
     private var voiceStateCancellable: AnyCancellable?
     private var audioPowerCancellable: AnyCancellable?
     private var accessibilityCheckTimer: Timer?
@@ -164,6 +179,20 @@ final class CompanionManager: ObservableObject {
         bindVoiceStateObservation()
         bindAudioPowerLevel()
         bindShortcutTransitions()
+
+        // Live lasso stroke updates flow into the published state the
+        // overlay renders.
+        lassoSelectionController.onLassoPathChanged = { [weak self] strokePoints in
+            self?.lassoStrokePoints = strokePoints
+        }
+
+        // ctrl+option+C copies the last response text.
+        copyShortcutCancellable = globalPushToTalkShortcutMonitor
+            .copyResponseShortcutPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] in
+                self?.copyLastResponseToClipboard()
+            }
 
         // Warm up the agent subprocess in the background so the first
         // push-to-talk doesn't pay the spawn + handshake cost.
@@ -299,6 +328,37 @@ final class CompanionManager: ObservableObject {
         }
     }
 
+    // MARK: - Copy Last Response (ctrl+option+C)
+
+    /// Copies the most recent assistant response text to the clipboard and
+    /// flashes a confirmation next to the cursor.
+    func copyLastResponseToClipboard() {
+        guard let lastResponse = conversationHistory.last?.assistantResponse,
+              !lastResponse.isEmpty else {
+            showTransientCursorMessage("nothing to copy yet")
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(lastResponse, forType: .string)
+        showTransientCursorMessage("copied to clipboard")
+        print("📋 Copied last response (\(lastResponse.count) chars)")
+    }
+
+    /// Flashes a short message in the cursor prompt bubble. Skipped while
+    /// the onboarding instruction sequence owns the bubble.
+    private func showTransientCursorMessage(_ messageText: String) {
+        guard onboardingSequenceTask == nil else { return }
+        onboardingPromptText = messageText
+        showOnboardingPrompt = true
+        withAnimation(.easeIn(duration: 0.2)) {
+            onboardingPromptOpacity = 1.0
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+            guard self.onboardingSequenceTask == nil else { return }
+            self.dismissOnboardingPrompt()
+        }
+    }
+
     func stop() {
         globalPushToTalkShortcutMonitor.stop()
         buddyDictationManager.cancelCurrentDictation()
@@ -306,6 +366,8 @@ final class CompanionManager: ObservableObject {
         responseTextOverlayManager.hideOverlay()
         acpAgentClient.stop()
         cancelOnboardingInstructionSequence()
+        _ = lassoSelectionController.end()
+        copyShortcutCancellable?.cancel()
         transientHideTask?.cancel()
 
         currentResponseTask?.cancel()
@@ -508,6 +570,13 @@ final class CompanionManager: ObservableObject {
             // Cancel the onboarding instruction sequence — the user is doing
             // the real thing now, which teaches better than reading about it.
             cancelOnboardingInstructionSequence()
+
+            // Arm lasso region selection for the duration of the hold: the
+            // overlay accepts mouse events so a click-drag draws a selection
+            // instead of clicking through. Any previous selection is stale.
+            pendingSelectedRegionRect = nil
+            overlayWindowManager.setLassoInteractionEnabled(true)
+            lassoSelectionController.begin()
     
 
 
@@ -526,6 +595,14 @@ final class CompanionManager: ObservableObject {
                 )
             }
         case .released:
+            // Finish the lasso session: restore click-through and keep the
+            // selection (if any) for the response that's about to run.
+            pendingSelectedRegionRect = lassoSelectionController.end()
+            overlayWindowManager.setLassoInteractionEnabled(false)
+            if pendingSelectedRegionRect != nil {
+                print("🫡 Lasso: selected region \(pendingSelectedRegionRect!)")
+            }
+
             // Cancel the pending start task in case the user released the shortcut
             // before the async startPushToTalk had a chance to begin recording.
             // Without this, a quick press-and-release drops the release event and
@@ -562,11 +639,18 @@ final class CompanionManager: ObservableObject {
         currentResponseTask = Task {
             voiceState = .processing
 
+            // Consume any lasso selection made during the hold. A region
+            // question is inherently visual, so the router is skipped and
+            // the crop goes straight to the agent.
+            let selectedRegionRect = pendingSelectedRegionRect
+            pendingSelectedRegionRect = nil
+
             // M2 router: element-location questions ("where is the save
             // button") are answered from the accessibility tree in ~100ms
             // with exact coordinates, never touching the agent.
             let axSnapshot = axTreeProvider.snapshotFrontmostApplication()
-            if let axSnapshot,
+            if selectedRegionRect == nil,
+               let axSnapshot,
                case .answerLocally(let spokenText, let element) = QuestionRouter.route(
                    transcript: transcript,
                    screenElements: axSnapshot.elements
@@ -576,9 +660,16 @@ final class CompanionManager: ObservableObject {
             }
 
             do {
-                // M2 capture discipline: active display only, downscaled.
-                // Less of the screen leaves the machine, smaller agent payload.
-                let screenCaptures = try await CompanionScreenCaptureUtility.captureScreensAsJPEG(activeDisplayOnly: true)
+                // M2 capture discipline: the lasso's bounding rect when the
+                // user drew one, otherwise the active display, downscaled.
+                let screenCaptures: [CompanionScreenCapture]
+                if let selectedRegionRect {
+                    screenCaptures = try await CompanionScreenCaptureUtility.captureRegionAsJPEG(
+                        globalRegionRect: selectedRegionRect
+                    )
+                } else {
+                    screenCaptures = try await CompanionScreenCaptureUtility.captureScreensAsJPEG(activeDisplayOnly: true)
+                }
 
                 guard !Task.isCancelled else { return }
 

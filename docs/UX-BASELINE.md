@@ -132,13 +132,18 @@ meaningful-UX territory, but a false positive (silently swallowing audio the
 user expected) is worse than the gap. Revisit after D1 ships, when text output
 makes the fallback safe.
 
-### D5. Capture scoping is a UX feature, tracked in M2
+### D5. Capture scoping is a UX feature — SHIPPED, extended with lasso region selection
 
-Active-display-only, downscaled capture (M2 capture discipline) is presented in
-UX terms: less of your screen leaves the machine, faster answers. Drag-to-select
-a region is deferred; it adds a mode and a shortcut for a need active-display
-cropping mostly covers. Revisit if real usage shows cross-app questions where
-cropping picks the wrong display.
+Active-display-only, downscaled capture shipped with M2. Region selection
+shipped after: while holding push-to-talk, click-drag draws a lasso on the
+overlay; on release the lasso's bounding rectangle (always a rectangular crop)
+is captured instead of the display. No drag means unchanged behavior. During
+the hold, the overlay accepts mouse events, so clicks are consumed rather than
+passed through; this is the cost of the gesture and only applies while the
+hotkey is held. Region questions skip the router (inherently visual).
+
+Also shipped: ctrl+option+C copies the last response text to the clipboard,
+with a confirmation flash in the cursor bubble.
 
 ### D6. Small reachable wins, order of cheapness
 

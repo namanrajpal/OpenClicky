@@ -183,6 +183,34 @@ struct BlueCursorView: View {
             // Nearly transparent background (helps with compositing)
             Color.black.opacity(0.001)
 
+            // Live lasso stroke — the user is drawing a region selection
+            // while holding push-to-talk. Points arrive in global AppKit
+            // coordinates; convert per-point into this screen's view space.
+            if companionManager.lassoStrokePoints.count >= 2 {
+                let lassoViewPoints = companionManager.lassoStrokePoints.map {
+                    convertScreenPointToSwiftUICoordinates($0)
+                }
+                Path { lassoPath in
+                    lassoPath.move(to: lassoViewPoints[0])
+                    for point in lassoViewPoints.dropFirst() {
+                        lassoPath.addLine(to: point)
+                    }
+                }
+                .stroke(
+                    DS.Colors.overlayCursorBlue,
+                    style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round, dash: [7, 5])
+                )
+                .shadow(color: DS.Colors.overlayCursorBlue.opacity(0.5), radius: 4)
+                Path { lassoPath in
+                    lassoPath.move(to: lassoViewPoints[0])
+                    for point in lassoViewPoints.dropFirst() {
+                        lassoPath.addLine(to: point)
+                    }
+                    lassoPath.closeSubpath()
+                }
+                .fill(DS.Colors.overlayCursorBlue.opacity(0.08))
+            }
+
             // Welcome speech bubble (first launch only)
             if isCursorOnThisScreen && showWelcome && !welcomeText.isEmpty {
                 Text(welcomeText)
@@ -796,6 +824,15 @@ class OverlayWindowManager {
             window.contentView = nil
         }
         overlayWindows.removeAll()
+    }
+
+    /// While a lasso selection is possible (push-to-talk held), the overlay
+    /// panels accept mouse events so the drag lands on the overlay instead of
+    /// clicking whatever is underneath. Restored to click-through on release.
+    func setLassoInteractionEnabled(_ enabled: Bool) {
+        for window in overlayWindows {
+            window.ignoresMouseEvents = !enabled
+        }
     }
 
     /// Fades out overlay windows over `duration` seconds, then removes them.

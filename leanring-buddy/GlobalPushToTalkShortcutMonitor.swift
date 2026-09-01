@@ -15,6 +15,14 @@ import Foundation
 final class GlobalPushToTalkShortcutMonitor: ObservableObject {
     let shortcutTransitionPublisher = PassthroughSubject<BuddyPushToTalkShortcut.ShortcutTransition, Never>()
 
+    /// Fires when the user presses ctrl+option+C: copy the last response
+    /// text to the clipboard. Rides the same listen-only event tap as
+    /// push-to-talk, so no extra permissions are involved.
+    let copyResponseShortcutPublisher = PassthroughSubject<Void, Never>()
+
+    /// ANSI keycode for the C key.
+    private static let cKeyCode: UInt16 = 8
+
     private var globalEventTap: CFMachPort?
     private var globalEventTapRunLoopSource: CFRunLoopSource?
     /// Mutated exclusively from the CGEvent tap callback, which runs on
@@ -109,6 +117,18 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
         }
 
         let eventKeyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+
+        // ctrl+option+C copies the last response. Checked before the
+        // push-to-talk logic since the C keyDown arrives while the
+        // push-to-talk modifiers are already held.
+        if eventType == .keyDown,
+           eventKeyCode == Self.cKeyCode,
+           event.flags.contains(.maskControl),
+           event.flags.contains(.maskAlternate) {
+            copyResponseShortcutPublisher.send(())
+            return Unmanaged.passUnretained(event)
+        }
+
         let shortcutTransition = BuddyPushToTalkShortcut.shortcutTransition(
             for: eventType,
             keyCode: eventKeyCode,
