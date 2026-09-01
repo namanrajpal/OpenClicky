@@ -68,13 +68,11 @@ incapable of side effects.
 ```bash
 git clone https://github.com/namanrajpal/OpenClicky.git
 cd OpenClicky
-open leanring-buddy.xcodeproj
+open OpenClicky.xcodeproj
 ```
 
-In Xcode: select the `leanring-buddy` scheme, set your signing team under
-Signing & Capabilities, and hit Cmd+R. (The scheme and directory keep an
-inherited misspelling; renaming them churns the project file and is on the
-roadmap.)
+In Xcode: select the `OpenClicky` scheme, set your signing team under
+Signing & Capabilities, and hit Cmd+R.
 
 On first run the app lives in your menu bar. Open the panel from the blue
 triangle icon and grant the four permissions it asks for: microphone,
@@ -110,7 +108,7 @@ Sentences fall back to the local voice automatically if a fetch fails.
 ## Project layout
 
 ```
-leanring-buddy/
+OpenClicky/
 ├── Core/                          portable core (no AppKit)
 │   ├── ACPAgentClient.swift          agent subprocess, ACP JSON-RPC, streaming
 │   ├── QuestionRouter.swift          on-device vs agent routing rules
