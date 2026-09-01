@@ -65,9 +65,12 @@ final class AXTreeProvider {
 
         var summaryLines: [String] = ["frontmost app: \(applicationName)"]
         for element in collectedElements.prefix(maxSummaryLines) {
-            summaryLines.append(
-                "\(element.role) \"\(element.title)\" at (\(Int(element.centerPoint.x)), \(Int(element.centerPoint.y)))"
-            )
+            // Names only, deliberately no coordinates: AX coordinates are in
+            // global display points, which is NEVER the POINT tag's space
+            // (screenshot pixels, possibly a lasso crop). Including them
+            // anchored smaller models to wrong numbers — the source of
+            // systematic pointing misses on region captures.
+            summaryLines.append("\(element.role) \"\(element.title)\"")
         }
 
         return AXTreeSnapshot(

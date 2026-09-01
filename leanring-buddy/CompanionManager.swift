@@ -58,7 +58,10 @@ final class CompanionManager: ObservableObject {
     /// On-device text-to-speech for spoken responses. Replaced the ElevenLabs
     /// cloud TTS client in M0 so responses are spoken with zero network
     /// dependency. May be upgraded to a higher-quality local engine in M3.
-    private let localTTSClient = LocalSpeechSynthesizerTTSClient()
+    /// Per-sentence TTS. Cloud (Cartesia/Deepgram, keys from .env) when
+    /// configured, on-device AVSpeechSynthesizer otherwise. Failed cloud
+    /// fetches fall back to the local voice per sentence.
+    private let ttsClient: any SentenceTTSClient = CloudSentenceTTSClient.makeDefaultTTSClient()
 
     /// The local agent (kiro-cli in ACP mode) that generates responses.
     /// Replaced the M0 placeholder and the upstream ClaudeAPI + worker seam.
@@ -563,7 +566,7 @@ final class CompanionManager: ObservableObject {
             // Cancel any in-progress response and TTS from a previous utterance
             currentResponseTask?.cancel()
             acpAgentClient.cancelActivePrompt()
-            localTTSClient.stopPlayback()
+            ttsClient.stopPlayback()
             responseTextOverlayManager.hideOverlay()
             clearDetectedElementLocation()
 
@@ -634,7 +637,7 @@ final class CompanionManager: ObservableObject {
     /// agent produces real answers from the transcript + screenshots.
     private func respondToTranscriptWithScreenshot(transcript: String) {
         currentResponseTask?.cancel()
-        localTTSClient.stopPlayback()
+        ttsClient.stopPlayback()
 
         currentResponseTask = Task {
             voiceState = .processing
@@ -681,7 +684,7 @@ final class CompanionManager: ObservableObject {
                 }
                 var promptText = transcript + "\n\n[context]\n" + imageLabelLines.joined(separator: "\n")
                 if let axSnapshot {
-                    promptText += "\n\naccessibility elements on the frontmost app (names are reliable; coordinates are for reference only, never for POINT tags):\n"
+                    promptText += "\n\naccessibility elements on the frontmost app (names of what's on screen):\n"
                         + String(axSnapshot.compactSummary.prefix(3000))
                 }
 
@@ -717,7 +720,7 @@ final class CompanionManager: ObservableObject {
                     }
                     if self.isVoiceResponseEnabled {
                         for completedSentence in sentenceSplitter.ingestChunk(chunkText) {
-                            self.localTTSClient.enqueueSentence(completedSentence)
+                            self.ttsClient.enqueueSentence(completedSentence)
                         }
                     }
                 }
@@ -730,7 +733,7 @@ final class CompanionManager: ObservableObject {
 
                 // Speak whatever the sentence splitter is still holding.
                 if isVoiceResponseEnabled, let remainderText = sentenceSplitter.flushRemainder() {
-                    localTTSClient.enqueueSentence(remainderText)
+                    ttsClient.enqueueSentence(remainderText)
                 }
                 // Settle the bubble on the final tag-free text, then let it
                 // auto-hide a few seconds later.
@@ -827,7 +830,7 @@ final class CompanionManager: ObservableObject {
         detectedElementDisplayFrame = element.displayFrame
 
         if isVoiceResponseEnabled {
-            localTTSClient.enqueueSentence(spokenText)
+            ttsClient.enqueueSentence(spokenText)
         }
 
         appendToConversationHistory(userTranscript: transcript, assistantResponse: spokenText)
@@ -844,7 +847,7 @@ final class CompanionManager: ObservableObject {
             responseTextOverlayManager.finishStreaming()
         }
         if isVoiceResponseEnabled {
-            localTTSClient.enqueueSentence("something went wrong while answering. try asking again.")
+            ttsClient.enqueueSentence("something went wrong while answering. try asking again.")
         }
         voiceState = .responding
     }
@@ -869,7 +872,7 @@ final class CompanionManager: ObservableObject {
         transientHideTask?.cancel()
         transientHideTask = Task {
             // Wait for TTS audio to finish playing
-            while localTTSClient.isPlaying {
+            while ttsClient.isPlaying {
                 try? await Task.sleep(nanoseconds: 200_000_000)
                 guard !Task.isCancelled else { return }
             }

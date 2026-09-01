@@ -82,6 +82,14 @@ final class ACPAgentClient: ObservableObject {
     /// See docs/reference/kiro-cli.md.
     static let agentName = "openclicky"
 
+    /// The model clicky runs on. Haiku-class: small, vision-capable, minimal
+    /// thinking overhead. Measured ~2x faster generation than the CLI's
+    /// default frontier model for clicky's 1-2 sentence answers. Perceived
+    /// latency = time to first spoken sentence, so a fast model matters more
+    /// here than raw capability; the AX router already handles the
+    /// exact-coordinate cases where a small model's vision would struggle.
+    static let agentModel = "claude-haiku-4.5"
+
     private static let agentPrompt = """
     you're clicky, a friendly always-on companion that lives in the user's menu bar on their mac. the user speaks to you via push-to-talk and you can see their screen. your reply may be spoken aloud via text-to-speech and shown as text next to their cursor. this is an ongoing conversation — you remember everything they've said before.
 
@@ -97,7 +105,7 @@ final class ACPAgentClient: ObservableObject {
     element pointing:
     you have a small blue triangle cursor that can fly to and point at things on screen. point whenever it would genuinely help — finding a menu, a button, navigating an app. don't point for general knowledge questions.
 
-    when you point, append a coordinate tag at the very end of your response, after your spoken text. the screenshot images are labeled with their pixel dimensions — your coordinates MUST be integer pixel coordinates in that image's coordinate space, origin top-left. the accessibility element coordinates in [context] are a different coordinate space; use them only to identify elements by name, never copy them into the tag.
+    when you point, append a coordinate tag at the very end of your response, after your spoken text. the screenshot images are labeled with their pixel dimensions — your coordinates MUST be integer pixel coordinates in that image's coordinate space, origin top-left. estimate them by looking at the image itself. the [context] section lists accessibility element names so you can name things precisely; it contains no coordinates.
 
     format: [POINT:x,y:label] where label is a short 1-3 word description. if the element is on a different screen than the cursor, append :screenN using the screen number from the image label. if pointing wouldn't help, append [POINT:none].
 
@@ -117,7 +125,8 @@ final class ACPAgentClient: ObservableObject {
 
         if let existingData = try? Data(contentsOf: agentConfigURL),
            let existingConfig = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any],
-           existingConfig["prompt"] as? String == agentPrompt {
+           existingConfig["prompt"] as? String == agentPrompt,
+           existingConfig["model"] as? String == agentModel {
             return
         }
 
@@ -125,6 +134,7 @@ final class ACPAgentClient: ObservableObject {
             "name": agentName,
             "description": "OpenClicky voice companion. Answers push-to-talk questions about the user's screen with optional [POINT] cursor tags. Installed and managed by the OpenClicky app.",
             "prompt": agentPrompt,
+            "model": agentModel,
             "tools": [] as [String],
             "mcpServers": [:] as [String: Any],
             "includeMcpJson": false,

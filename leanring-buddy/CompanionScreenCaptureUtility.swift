@@ -90,6 +90,9 @@ enum CompanionScreenCaptureUtility {
             contentFilter: filter,
             configuration: configuration
         )
+        if cgImage.width != configuration.width || cgImage.height != configuration.height {
+            print("📸 Region capture: SCK returned \(cgImage.width)x\(cgImage.height) for requested \(configuration.width)x\(configuration.height)")
+        }
         guard let jpegData = NSBitmapImageRep(cgImage: cgImage)
                 .representation(using: .jpeg, properties: [.compressionFactor: 0.85]) else {
             throw NSError(domain: "CompanionScreenCapture", code: -5,
@@ -103,8 +106,12 @@ enum CompanionScreenCaptureUtility {
             displayWidthInPoints: Int(clampedRegion.width),
             displayHeightInPoints: Int(clampedRegion.height),
             displayFrame: clampedRegion,
-            screenshotWidthInPixels: configuration.width,
-            screenshotHeightInPixels: configuration.height
+            // ACTUAL image dimensions, not the requested configuration ones.
+            // The model sees (and answers in) the real image's pixel space;
+            // SCK may adjust output size, and any mismatch is a systematic
+            // POINT scale error.
+            screenshotWidthInPixels: cgImage.width,
+            screenshotHeightInPixels: cgImage.height
         )]
     }
 
@@ -208,8 +215,11 @@ enum CompanionScreenCaptureUtility {
                 displayWidthInPoints: Int(displayFrame.width),
                 displayHeightInPoints: Int(displayFrame.height),
                 displayFrame: displayFrame,
-                screenshotWidthInPixels: configuration.width,
-                screenshotHeightInPixels: configuration.height
+                // ACTUAL image dimensions (see region path note): SCK may
+                // adjust output size vs the requested configuration, and the
+                // POINT coordinate space is the real image the model sees.
+                screenshotWidthInPixels: cgImage.width,
+                screenshotHeightInPixels: cgImage.height
             ))
         }
 

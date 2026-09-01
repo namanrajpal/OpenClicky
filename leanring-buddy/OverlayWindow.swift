@@ -375,10 +375,14 @@ struct BlueCursorView: View {
                     .trim(from: 0, to: penCircleProgress)
                     .stroke(
                         DS.Colors.overlayCursorBlue,
-                        style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
+                        style: StrokeStyle(lineWidth: 4.5, lineCap: .round, lineJoin: .round)
                     )
                     .frame(width: 72, height: 72)
-                    .shadow(color: DS.Colors.overlayCursorBlue.opacity(0.5), radius: 5)
+                    // Layered shadows: a tight bright halo plus a wide soft
+                    // bloom, so the stroke reads as a glowing marker.
+                    .shadow(color: DS.Colors.overlayCursorBlue.opacity(0.9), radius: 4)
+                    .shadow(color: DS.Colors.overlayCursorBlue.opacity(0.6), radius: 12)
+                    .shadow(color: DS.Colors.overlayCursorBlue.opacity(0.35), radius: 24)
                     .opacity(penCircleOpacity)
                     .position(penCircleCenter)
                     .animation(.easeOut(duration: 0.55), value: penCircleProgress)
