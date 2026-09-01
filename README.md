@@ -143,6 +143,11 @@ when you provide keys.
 
 ## License
 
-MIT. See [LICENSE](LICENSE). OpenClicky began from the MIT-licensed
-[clicky](https://github.com/farzaa/clicky) codebase and has since replaced
-its cloud pipeline with the local-first architecture described above.
+MIT. See [LICENSE](LICENSE).
+
+OpenClicky grew out of [clicky](https://github.com/farzaa/clicky), an
+MIT-licensed weekend experiment by Farza. It has since been completely
+reworked around a different vision: local-first execution, a local agent
+subprocess in place of cloud APIs, on-device routing, and region-scoped
+capture. The license file carries the original copyright line alongside
+the current one.

@@ -5,8 +5,7 @@
 
 ## Overview
 
-macOS menu bar companion app (OpenClicky — a fork of farzaa/clicky rebuilt
-around local-first execution). Lives entirely in the macOS status bar (no dock
+macOS menu bar companion app, rebuilt around local-first execution. Lives entirely in the macOS status bar (no dock
 icon, no main window). Push-to-talk (ctrl+option) captures voice, transcribed
 on-device by Apple Speech. A deterministic router (M2) answers element-location
 questions locally from the accessibility tree in ~100ms with exact coordinates;
