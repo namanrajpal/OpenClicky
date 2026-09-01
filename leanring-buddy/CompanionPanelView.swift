@@ -71,7 +71,7 @@ struct CompanionPanelView: View {
                 Spacer()
                     .frame(height: 16)
 
-                dmFarzaButton
+                upstreamCreditButton
                     .padding(.horizontal, 16)
             }
 
@@ -101,7 +101,7 @@ struct CompanionPanelView: View {
                     .frame(width: 8, height: 8)
                     .shadow(color: statusDotColor.opacity(0.6), radius: 4)
 
-                Text("Clicky")
+                Text("OpenClicky")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(DS.Colors.textPrimary)
             }
@@ -121,7 +121,7 @@ struct CompanionPanelView: View {
                     .frame(width: 20, height: 20)
                     .background(
                         Circle()
-                            .fill(Color.white.opacity(0.08))
+                            .fill(DS.Colors.textPrimary.opacity(0.06))
                     )
             }
             .buttonStyle(.plain)
@@ -152,7 +152,7 @@ struct CompanionPanelView: View {
                     .font(.system(size: 12, weight: .bold))
                     .foregroundColor(DS.Colors.textSecondary)
 
-                Text("Some permissions were revoked. Grant all four below to keep using Clicky.")
+                Text("Some permissions were revoked. Grant all four below to keep using OpenClicky.")
                     .font(.system(size: 11))
                     .foregroundColor(DS.Colors.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -160,18 +160,18 @@ struct CompanionPanelView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Hi, I'm Farza. This is Clicky.")
+                Text("This is OpenClicky.")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundColor(DS.Colors.textSecondary)
 
-                Text("A side project I made for fun to help me learn stuff as I use my computer.")
+                Text("A voice companion that lives by your cursor. Hold a hotkey, ask about your screen, and it answers out loud, in text, and by pointing.")
                     .font(.system(size: 11))
                     .foregroundColor(DS.Colors.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Text("Nothing runs in the background. Clicky will only take a screenshot when you press the hot key. So, you can give that permission in peace. If you are still sus, eh, I can't do much there champ.")
-                    .font(.system(size: 11))
-                    .foregroundColor(Color(red: 0.9, green: 0.4, blue: 0.4))
+                Text("Nothing runs in the background and nothing leaves this Mac except what goes to your local agent. A screenshot is taken only while you hold the hotkey, so you can grant these permissions in peace.")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.Colors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -650,7 +650,7 @@ struct CompanionPanelView: View {
             }
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color.white.opacity(0.06))
+                    .fill(DS.Colors.textPrimary.opacity(0.05))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -672,18 +672,19 @@ struct CompanionPanelView: View {
                 .padding(.vertical, 5)
                 .background(
                     RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(isSelected ? Color.white.opacity(0.1) : Color.clear)
+                        .fill(isSelected ? DS.Colors.textPrimary.opacity(0.09) : Color.clear)
                 )
         }
         .buttonStyle(.plain)
         .pointerCursor()
     }
 
-    // MARK: - DM Farza Button
+    // MARK: - Upstream Credit
 
-    private var dmFarzaButton: some View {
+    /// OpenClicky is a fork of farzaa/clicky (MIT). Credit where due.
+    private var upstreamCreditButton: some View {
         Button(action: {
-            if let url = URL(string: "https://x.com/farzatv") {
+            if let url = URL(string: "https://github.com/farzaa/clicky") {
                 NSWorkspace.shared.open(url)
             }
         }) {
@@ -692,7 +693,7 @@ struct CompanionPanelView: View {
                     .font(.system(size: 12, weight: .medium))
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Got feedback? DM me")
+                    Text("Based on Clicky by Farza (MIT)")
                         .font(.system(size: 12, weight: .semibold))
                     Text("Bugs, ideas, anything — I read every message.")
                         .font(.system(size: 10))
@@ -705,7 +706,7 @@ struct CompanionPanelView: View {
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
-                    .fill(Color.white.opacity(0.06))
+                    .fill(DS.Colors.textPrimary.opacity(0.05))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
@@ -726,7 +727,7 @@ struct CompanionPanelView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "power")
                         .font(.system(size: 11, weight: .medium))
-                    Text("Quit Clicky")
+                    Text("Quit OpenClicky")
                         .font(.system(size: 12, weight: .medium))
                 }
                 .foregroundColor(DS.Colors.textTertiary)
@@ -756,11 +757,22 @@ struct CompanionPanelView: View {
 
     // MARK: - Visual Helpers
 
+    /// Light liquid panel: a translucent system material tinted by the light
+    /// surface color, so the desktop softly shows through the panel.
     private var panelBackground: some View {
-        RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .fill(DS.Colors.background)
-            .shadow(color: Color.black.opacity(0.5), radius: 20, x: 0, y: 10)
-            .shadow(color: Color.black.opacity(0.3), radius: 4, x: 0, y: 2)
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .fill(.ultraThinMaterial)
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(DS.Colors.surface1.opacity(0.55))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.white.opacity(0.55), lineWidth: 0.8)
+            )
+            .shadow(color: Color.black.opacity(0.18), radius: 24, x: 0, y: 12)
+            .shadow(color: Color.black.opacity(0.08), radius: 4, x: 0, y: 2)
+            .environment(\.colorScheme, .light)
     }
 
     private var statusDotColor: Color {
