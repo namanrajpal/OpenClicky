@@ -1,4 +1,4 @@
-# Clicky - Agent Instructions
+# OpenClicky - Agent Instructions
 
 <!-- This is the single source of truth for all AI coding agents. CLAUDE.md is a symlink to this file. -->
 <!-- AGENTS.md spec: https://github.com/agentsmd/agents.md — supported by Claude Code, Cursor, Copilot, Gemini CLI, and others. -->
@@ -18,21 +18,21 @@ TTS pipelining). Response modality (Voice + Text / Text only / Voice only) is a
 user preference in the panel. A blue cursor overlay flies to and points at UI
 elements referenced by `[POINT:x,y:label:screenN]` tags.
 
-The app has zero API keys, no proxy server, and no analytics. The upstream
-Cloudflare Worker, PostHog, AssemblyAI, ElevenLabs, OpenAI clients, Sparkle
-auto-updater, and FormSpark email gate were all removed in M0. The only
-network dependency remaining is the onboarding intro video (streamed from
-mux.com), slated for removal in the rebrand pass.
+The app has no model-provider API keys, proxy server, analytics, or
+auto-updater. The upstream Cloudflare Worker, PostHog, AssemblyAI,
+ElevenLabs, OpenAI clients, Sparkle, and FormSpark email gate were removed in
+M0. Optional Cartesia or Deepgram TTS uses keys supplied through local
+configuration; each failed cloud sentence falls back to on-device speech.
 
 ## Architecture
 
 - **App Type**: Menu bar-only (`LSUIElement=true`), no dock icon or main window
 - **Framework**: SwiftUI (macOS native) with AppKit bridging for menu bar panel and cursor overlay
 - **Pattern**: MVVM with `@StateObject` / `@Published` state management
-- **AI Chat**: `Core/ACPAgentClient.swift` — spawns `kiro-cli acp --agent openclicky` (stdio JSON-RPC, protocolVersion 1), streams `agent_message_chunk` updates, sends screenshots as image content blocks. clicky's instructions live in a dedicated kiro-cli agent config (`~/.kiro/agents/openclicky.json`, self-installed by the app, `tools: []`, no MCP servers — ~4x faster session startup, no side effects possible). Wire protocol reference: `docs/reference/kiro-cli.md`. `ClaudeAPI.swift` is retained on disk as historical reference only.
-- **Routing**: `Core/QuestionRouter.swift` — deterministic rules decide on-device vs agent. Element-location questions resolve locally against the AX tree (`AXTreeProvider.swift`); ambiguity or reasoning delegates to the agent.
+- **AI Chat**: `Infrastructure/Agent/ACPAgentClient.swift` spawns `kiro-cli acp --agent openclicky` (stdio JSON-RPC, protocolVersion 1), streams `agent_message_chunk` updates, and sends screenshots as image content blocks. OpenClicky's instructions live in `~/.kiro/agents/openclicky.json`, self-installed by the app with `tools: []`, no MCP servers, and the pinned `claude-haiku-4.5` model. Wire protocol reference: `docs/reference/kiro-cli.md`.
+- **Routing**: `Core/Routing/QuestionRouter.swift` — deterministic rules decide on-device vs agent. Element-location questions resolve locally against the AX tree (`Platform/Accessibility/AXTreeProvider.swift`); ambiguity or reasoning delegates to the agent.
 - **Speech-to-Text**: Apple Speech (on-device) via the pluggable transcription-provider layer. Cloud providers (AssemblyAI, OpenAI) were removed in M0; a whisper.cpp-backed provider may be added in M3.
-- **Text-to-Speech**: AVSpeechSynthesizer (on-device) via `LocalSpeechSynthesizerTTSClient.swift`, fed per completed sentence during streaming (`Core/StreamingSentenceSplitter.swift`). May be upgraded to a higher-quality local engine in M3
+- **Text-to-Speech**: `SentenceTTSClient` receives completed sentences from `Core/Streaming/StreamingSentenceSplitter.swift`. `Platform/Speech/CloudSentenceTTSClient.swift` selects optional Cartesia or Deepgram output when configured and falls back per sentence to `Platform/Speech/LocalSpeechSynthesizerTTSClient.swift` / AVSpeechSynthesizer.
 - **Screen Capture**: ScreenCaptureKit (macOS 14.2+), multi-monitor support
 - **Voice Input**: Push-to-talk via `AVAudioEngine` + pluggable transcription-provider layer. System-wide keyboard shortcut via listen-only CGEvent tap.
 - **Element Pointing**: The response embeds `[POINT:x,y:label:screenN]` tags. The overlay parses these, maps coordinates to the correct monitor, and animates the blue cursor along a bezier arc to the target.
@@ -49,7 +49,7 @@ mux.com), slated for removal in the rebrand pass.
 
 **Global Push-To-Talk Shortcut**: Background push-to-talk uses a listen-only `CGEvent` tap instead of an AppKit global monitor so modifier-based shortcuts like `ctrl + option` are detected more reliably while the app is running in the background.
 
-**Shared URLSession for AssemblyAI**: A single long-lived `URLSession` is shared across all AssemblyAI streaming sessions (owned by the provider, not the session). Creating and invalidating a URLSession per session corrupts the OS connection pool and causes "Socket is not connected" errors after a few rapid reconnections.
+**Ordered cloud TTS with local fallback**: Cloud sentence fetches can run concurrently, but playback remains in enqueue order. `stopPlayback()` increments a generation counter so late fetches from an interrupted turn cannot enter the next response. A failed sentence uses AVSpeechSynthesizer without failing the remaining response.
 
 **Transient Cursor Mode**: When "Show Clicky" is off, pressing the hotkey fades in the cursor overlay for the duration of the interaction (recording → response → TTS → optional pointing), then fades it out automatically after 1 second of inactivity.
 
@@ -57,39 +57,40 @@ mux.com), slated for removal in the rebrand pass.
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `leanring_buddyApp.swift` | ~89 | Menu bar app entry point. Uses `@NSApplicationDelegateAdaptor` with `CompanionAppDelegate` which creates `MenuBarPanelManager` and starts `CompanionManager`. No main window — the app lives entirely in the status bar. |
-| `CompanionManager.swift` | ~1030 | Central state machine. Owns dictation, shortcut monitoring, screen capture, the response seam (M0 placeholder / M1 ACP agent), on-device TTS, and overlay management. Tracks voice state (idle/listening/processing/responding), conversation history, model selection, and cursor visibility. Coordinates the full push-to-talk → screenshot → response → TTS → pointing pipeline. |
-| `MenuBarPanelManager.swift` | ~243 | NSStatusItem + custom NSPanel lifecycle. Creates the menu bar icon, manages the floating companion panel (show/hide/position), installs click-outside-to-dismiss monitor. |
-| `CompanionPanelView.swift` | ~845 | SwiftUI panel content for the menu bar dropdown. Shows companion status, push-to-talk instructions, model picker (inert in M0 — becomes the agent picker in M1), permissions UI, DM feedback button, and quit button. Dark aesthetic using `DS` design system. |
-| `OverlayWindow.swift` | ~881 | Full-screen transparent overlay hosting the blue cursor, response text, waveform, and spinner. Handles cursor animation, element pointing with bezier arcs, multi-monitor coordinate mapping, and fade-out transitions. |
-| `CompanionResponseOverlay.swift` | ~217 | Cursor-following streaming-text bubble for responses (revived in M1; was dead code upstream). Fed progressively from the ACP chunk stream. |
-| `CompanionScreenCaptureUtility.swift` | ~132 | Multi-monitor screenshot capture using ScreenCaptureKit. Returns labeled image data for each connected display. |
-| `BuddyDictationManager.swift` | ~866 | Push-to-talk voice pipeline. Handles microphone capture via `AVAudioEngine`, provider-aware permission checks, keyboard/button dictation sessions, transcript finalization, shortcut parsing, contextual keyterms, and live audio-level reporting for waveform feedback. |
-| `BuddyTranscriptionProvider.swift` | ~61 | Protocol surface and provider factory for voice transcription backends. Resolves provider based on `VoiceTranscriptionProvider` in Info.plist — Apple Speech only since M0; the mechanism is kept for future local providers. |
-| `AppleSpeechTranscriptionProvider.swift` | ~147 | Local fallback transcription provider backed by Apple's Speech framework. |
-| `LocalSpeechSynthesizerTTSClient.swift` | ~62 | On-device TTS via AVSpeechSynthesizer. `enqueueSentence` queues sentences natively for per-sentence streaming speech. |
-| `Core/ACPAgentClient.swift` | ~407 | ACP client: spawn kiro-cli, initialize/session-new handshake, streaming prompts with image blocks, session/cancel, agent-mode switching, permission-request rejection. PORTABLE CORE (no AppKit). |
-| `Core/QuestionRouter.swift` | ~138 | Deterministic on-device router: extracts locate-targets from transcripts, fuzzy-matches AX element titles, answers locally only on confident unambiguous matches. PORTABLE CORE. |
-| `Core/StreamingSentenceSplitter.swift` | ~93 | Splits streaming text into complete sentences for TTS and holds back partial [POINT tags so they are never spoken or shown. PORTABLE CORE. |
-| `AXTreeProvider.swift` | ~172 | Walks the frontmost app's accessibility tree: RoutableScreenElements with exact AppKit-global coordinates plus a compact text summary for agent context. |
-| `BuddyAudioConversionSupport.swift` | ~108 | Audio conversion helpers. Converts live mic buffers to PCM16 mono audio and builds WAV payloads for upload-based providers. |
-| `GlobalPushToTalkShortcutMonitor.swift` | ~132 | System-wide push-to-talk monitor. Owns the listen-only `CGEvent` tap and publishes press/release transitions. |
-| `ClaudeAPI.swift` | ~291 | UNUSED since M0. Retained as the reference for the request/streaming surface that `ACPAgentClient.swift` replaces in M1. |
-| `ElementLocationDetector.swift` | ~335 | Detects UI element locations in screenshots for cursor pointing. |
-| `DesignSystem.swift` | ~880 | Design system tokens — colors, corner radii, shared styles. All UI references `DS.Colors`, `DS.CornerRadius`, etc. |
-| `WindowPositionManager.swift` | ~262 | Window placement logic, Screen Recording permission flow, and accessibility permission helpers. |
-| `AppBundleConfiguration.swift` | ~28 | Runtime configuration reader for keys stored in the app bundle Info.plist. |
+| `App/OpenClickyApp.swift` | ~69 | Menu bar app entry point. Uses `@NSApplicationDelegateAdaptor` with `CompanionAppDelegate`, which creates `MenuBarPanelManager` and starts `CompanionManager`. The app has no main window. |
+| `App/CompanionManager.swift` | ~944 | Central state machine for dictation, shortcut monitoring, AX routing, screen capture, ACP streaming, response modality, TTS, overlays, lasso selection, interruption, and pointing. |
+| `Features/MenuBar/MenuBarPanelManager.swift` | ~243 | NSStatusItem + custom NSPanel lifecycle. Creates the menu bar icon, manages the floating companion panel (show/hide/position), installs click-outside-to-dismiss monitor. |
+| `Features/MenuBar/CompanionPanelView.swift` | ~773 | SwiftUI menu-bar panel with status, permission setup, ACP agent-mode picker, response-modality control, cursor visibility, onboarding, and quit actions. Uses the `DS` design system. |
+| `Features/CursorOverlay/OverlayWindow.swift` | ~978 | Full-screen transparent overlay hosting the blue cursor, response text, waveform, and spinner. Handles cursor animation, element pointing with bezier arcs, multi-monitor coordinate mapping, and fade-out transitions. |
+| `Features/CursorOverlay/CompanionResponseOverlay.swift` | ~217 | Cursor-following streaming-text bubble for responses (revived in M1; was dead code upstream). Fed progressively from the ACP chunk stream. |
+| `Platform/ScreenCapture/CompanionScreenCaptureUtility.swift` | ~233 | Multi-monitor screenshot capture using ScreenCaptureKit. Returns labeled image data for each connected display. |
+| `Features/VoiceInteraction/BuddyDictationManager.swift` | ~866 | Push-to-talk voice pipeline. Handles microphone capture via `AVAudioEngine`, provider-aware permission checks, keyboard/button dictation sessions, transcript finalization, shortcut parsing, contextual keyterms, and live audio-level reporting for waveform feedback. |
+| `Features/VoiceInteraction/BuddyTranscriptionProvider.swift` | ~58 | Transcription provider protocol and factory. Apple Speech is the current implementation; the boundary supports future on-device providers. |
+| `Platform/Speech/AppleSpeechTranscriptionProvider.swift` | ~147 | Local fallback transcription provider backed by Apple's Speech framework. |
+| `Platform/Speech/LocalSpeechSynthesizerTTSClient.swift` | ~42 | On-device AVSpeechSynthesizer implementation of `SentenceTTSClient` and cloud fallback. |
+| `Platform/Speech/CloudSentenceTTSClient.swift` | ~262 | Optional Cartesia/Deepgram per-sentence TTS with concurrent fetch, ordered playback, interruption generation, and local fallback. |
+| `Infrastructure/Agent/ACPAgentClient.swift` | ~472 | External-process adapter: spawn kiro-cli, initialize/session-new handshake, streaming prompts with image blocks, cancellation, agent-mode switching, and permission-request rejection. |
+| `Infrastructure/Configuration/EnvFileLoader.swift` | ~99 | Process-environment and source-relative `.env` lookup for optional TTS configuration. |
+| `Core/Routing/QuestionRouter.swift` | ~138 | Deterministic routing rules. Platform-lean today; CoreGraphics geometry must be removed before cross-platform package extraction. |
+| `Core/Streaming/StreamingSentenceSplitter.swift` | ~93 | Foundation-only streaming text segmentation and partial annotation holdback. |
+| `Platform/Accessibility/AXTreeProvider.swift` | ~175 | Walks the frontmost app's accessibility tree: routable elements with exact AppKit-global coordinates plus a names-only summary for agent context. |
+| `Features/CursorOverlay/LassoRegionSelectionController.swift` | ~109 | Consumes drag events while push-to-talk is held, publishes the drawn path, and returns a rectangular capture region. |
+| `Platform/Speech/BuddyAudioConversionSupport.swift` | ~108 | Audio conversion helpers. Converts live mic buffers to PCM16 mono audio and builds WAV payloads for upload-based providers. |
+| `Platform/Shortcuts/GlobalPushToTalkShortcutMonitor.swift` | ~152 | System-wide push-to-talk monitor. Owns the listen-only `CGEvent` tap and publishes press/release transitions. |
+| `DesignSystem/DesignSystem.swift` | ~880 | Design system tokens — colors, corner radii, shared styles. All UI references `DS.Colors`, `DS.CornerRadius`, etc. |
+| `Platform/Permissions/WindowPositionManager.swift` | ~184 | Accessibility and Screen Recording permission flows, legacy-key migration, and display ID helpers. |
+| `Infrastructure/Configuration/AppBundleConfiguration.swift` | ~28 | Runtime configuration reader for keys stored in the app bundle Info.plist. |
 
 ## Build & Run
 
 ```bash
 # Open in Xcode
-open leanring-buddy.xcodeproj
+open OpenClicky.xcodeproj
 
-# Select the leanring-buddy scheme, set signing team, Cmd+R to build and run
+# Select the OpenClicky scheme, set signing team, Cmd+R to build and run
 
 # Known non-blocking warnings: Swift 6 concurrency warnings,
-# deprecated onChange warning in OverlayWindow.swift. Do NOT attempt to fix these.
+# deprecated onChange warning in Features/CursorOverlay/OverlayWindow.swift. Do NOT attempt to fix these.
 ```
 
 **Do NOT run `xcodebuild` from the terminal** — it invalidates TCC (Transparency, Consent, and Control) permissions and the app will need to re-request screen recording, accessibility, etc.
@@ -128,7 +129,6 @@ IMPORTANT: Follow these naming rules strictly. Clarity is the top priority.
 - Do not add features, refactor code, or make "improvements" beyond what was asked
 - Do not add docstrings, comments, or type annotations to code you did not change
 - Do not try to fix the known non-blocking warnings (Swift 6 concurrency, deprecated onChange)
-- Do not rename the project directory or scheme (the "leanring" typo is intentional/legacy)
 - Do not run `xcodebuild` from the terminal — it invalidates TCC permissions
 
 ## Git Workflow
