@@ -2,7 +2,60 @@
 
 Status: as-built reference for the current Swift implementation.
 
-OpenClicky is a menu-bar-only macOS app with a native AppKit/SwiftUI shell and a small Foundation-only core. It accepts push-to-talk input, chooses a deterministic accessibility path or a screenshot-aware agent path, streams text and speech, and optionally flies the cursor buddy to a target.
+OpenClicky is a menu-bar-only macOS app with a native AppKit/SwiftUI shell and a small platform-lean core. It accepts push-to-talk input, chooses a deterministic accessibility path or a screenshot-aware agent path, streams text and speech, and optionally flies the cursor buddy to a target.
+
+## Source organization and architectural direction
+
+```text
+OpenClicky/
+├── App/                  lifecycle, composition, and observable application state
+├── Core/                 routing and stream-processing rules
+├── Features/             user-facing voice, cursor-overlay, and menu-bar surfaces
+├── Platform/             macOS Accessibility, capture, speech, shortcut, and permission adapters
+├── Infrastructure/       ACP process transport and configuration loading
+├── DesignSystem/         shared native visual tokens and controls
+├── Resources/            asset catalog
+├── Info.plist             app metadata and permission copy
+└── OpenClicky.entitlements signing capabilities
+```
+
+The common architectural theme is a native shell around portable behavior:
+
+```text
+Features -> App -> Core
+              |
+              +-> Platform adapters
+              +-> Infrastructure adapters
+```
+
+- **Features** render platform-native UI and forward user intent. They should not contain routing, protocol parsing, or capture policy.
+- **App** is the composition root. It owns lifecycle and application state, and coordinates Core behavior with concrete adapters.
+- **Core** owns deterministic rules and stream transformations. It must not import SwiftUI, AppKit, ScreenCaptureKit, AVFoundation, or other platform UI frameworks.
+- **Platform** wraps operating-system capabilities such as Accessibility, capture, speech, shortcuts, permissions, and windows.
+- **Infrastructure** wraps external processes, wire transports, and configuration sources.
+
+The current Xcode target still compiles these folders as one Swift module, so the boundary is architectural rather than compiler-enforced. `QuestionRouter` still uses CoreGraphics geometry with AppKit-global semantics. A future package extraction should replace those values with platform-neutral point and rectangle types before claiming full Windows portability.
+
+### Future Windows client
+
+The Windows client should mirror the same shape with a native WinUI 3 shell:
+
+```text
+macOS Features + macOS Platform adapters
+                    -> shared Core behavior and contracts <-
+Windows Views/ViewModels + Windows Platform adapters
+```
+
+The reusable contract is the behavior and data model: routing rules, streaming semantics, annotation grammar, ACP message shapes, cancellation outcomes, and coordinate-conversion fixtures. macOS keeps SwiftUI/AppKit, Accessibility, ScreenCaptureKit, Apple Speech, and `NSPanel`; Windows supplies WinUI 3, UI Automation, Windows Graphics Capture, Windows input APIs, and its own speech and overlay implementations.
+
+Swift and SwiftPM officially support Windows development, but the repository does not assume that C# will consume a Swift binary. Shared contracts and golden fixtures allow either a Windows-compatible Swift core or a small C# implementation to remain behaviorally equivalent.
+
+References:
+
+- [SwiftPM library structure](https://www.swift.org/getting-started/library-swiftpm/)
+- [Swift platform support, including Windows](https://swift.org/platform-support/)
+- [Microsoft WinUI 3 architecture patterns](https://learn.microsoft.com/en-us/windows/apps/develop/architecture-patterns)
+- [Microsoft modern WinUI 3 app structure](https://learn.microsoft.com/en-us/windows/apps/develop/ui/windows-app-sdk-app-structure)
 
 ## System flow
 

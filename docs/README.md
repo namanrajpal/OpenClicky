@@ -8,6 +8,7 @@ This directory contains the as-built product, architecture, integration, and pla
 docs/
 ├── README.md                         this index
 ├── setup.md                          developer setup, permissions, and smoke checks
+├── permissions.md                    plain-language explanation of every macOS permission prompt
 ├── architecture.md                   system structure, request flow, and coordinate spaces
 ├── UX-BASELINE.md                    shipped interaction model and UX decisions
 ├── reference/
@@ -22,7 +23,7 @@ docs/
 
 ## Recommended reading paths
 
-- **Run the app:** [Setup](setup.md) then [Configuration](reference/configuration.md).
+- **Run the app:** [Setup](setup.md), [Permissions](permissions.md), then [Configuration](reference/configuration.md).
 - **Understand the system:** [Architecture](architecture.md), [Components](reference/components.md), then [kiro-cli ACP](reference/kiro-cli.md).
 - **Change user behavior:** [UX baseline](UX-BASELINE.md) before editing overlay, modality, capture, or onboarding behavior.
 - **Change pointing:** [Annotation protocol](reference/annotation-protocol.md) and the coordinate-space section in [Architecture](architecture.md).

@@ -25,7 +25,7 @@ Shipped UX beyond the milestones (see UX-BASELINE Section 6):
   region select, D6.1 cursor buddy toggle, copy-response shortcut.
 - Pen circle highlight: the buddy sketches a hand-drawn open circle
   around the element it points at (`PenCircleShape` in
-  `OverlayWindow.swift`).
+  `Features/CursorOverlay/OverlayWindow.swift`).
 
 ## Near-term (committed direction, unscheduled)
 

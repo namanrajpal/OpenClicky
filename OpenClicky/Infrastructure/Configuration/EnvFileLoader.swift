@@ -54,13 +54,13 @@ enum EnvFileLoader {
             candidateURLs.append(URL(fileURLWithPath: explicitPath))
         }
 
-        // Dev builds: this source file lives at <repo>/OpenClicky/Core/,
-        // so the repo root's .env is two directories up. #filePath is baked
-        // in at compile time, which is exactly right for a from-source build
-        // on the machine that owns the .env.
+        // Dev builds: this source file lives under
+        // <repo>/OpenClicky/Infrastructure/Configuration/. #filePath is baked
+        // in at compile time, so walk from that source location to the repo root.
         let sourceFileURL = URL(fileURLWithPath: #filePath)
         let repoRootEnvURL = sourceFileURL
-            .deletingLastPathComponent()   // Core/
+            .deletingLastPathComponent()   // Configuration/
+            .deletingLastPathComponent()   // Infrastructure/
             .deletingLastPathComponent()   // OpenClicky/
             .deletingLastPathComponent()   // repo root
             .appendingPathComponent(".env")

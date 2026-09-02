@@ -1,69 +1,61 @@
 # OpenClicky Components and Internal APIs
 
-All Swift symbols use the app module's default `internal` access unless noted otherwise. `Core/` is Foundation-only by design; the remaining files form the macOS shell.
+All Swift symbols currently use the app module's default `internal` access unless noted otherwise. The folder layout records ownership and dependency direction inside the single Xcode target.
 
 ## Source map
 
 ```text
 OpenClicky/
+├── App/
+│   ├── OpenClickyApp.swift
+│   └── CompanionManager.swift
 ├── Core/
-│   ├── ACPAgentClient.swift
-│   ├── EnvFileLoader.swift
-│   ├── QuestionRouter.swift
-│   └── StreamingSentenceSplitter.swift
-├── OpenClickyApp.swift
-├── CompanionManager.swift
-├── BuddyDictationManager.swift
-├── BuddyTranscriptionProvider.swift
-├── AppleSpeechTranscriptionProvider.swift
-├── BuddyAudioConversionSupport.swift
-├── GlobalPushToTalkShortcutMonitor.swift
-├── CompanionScreenCaptureUtility.swift
-├── AXTreeProvider.swift
-├── LassoRegionSelectionController.swift
-├── LocalSpeechSynthesizerTTSClient.swift
-├── CloudSentenceTTSClient.swift
-├── OverlayWindow.swift
-├── CompanionResponseOverlay.swift
-├── MenuBarPanelManager.swift
-├── CompanionPanelView.swift
-├── WindowPositionManager.swift
-├── DesignSystem.swift
-└── AppBundleConfiguration.swift
+│   ├── Routing/QuestionRouter.swift
+│   └── Streaming/StreamingSentenceSplitter.swift
+├── Features/
+│   ├── VoiceInteraction/
+│   │   ├── BuddyDictationManager.swift
+│   │   └── BuddyTranscriptionProvider.swift
+│   ├── CursorOverlay/
+│   │   ├── OverlayWindow.swift
+│   │   ├── CompanionResponseOverlay.swift
+│   │   └── LassoRegionSelectionController.swift
+│   └── MenuBar/
+│       ├── MenuBarPanelManager.swift
+│       └── CompanionPanelView.swift
+├── Platform/
+│   ├── Accessibility/AXTreeProvider.swift
+│   ├── ScreenCapture/CompanionScreenCaptureUtility.swift
+│   ├── Speech/
+│   │   ├── AppleSpeechTranscriptionProvider.swift
+│   │   ├── LocalSpeechSynthesizerTTSClient.swift
+│   │   ├── CloudSentenceTTSClient.swift
+│   │   └── BuddyAudioConversionSupport.swift
+│   ├── Shortcuts/GlobalPushToTalkShortcutMonitor.swift
+│   └── Permissions/WindowPositionManager.swift
+├── Infrastructure/
+│   ├── Agent/ACPAgentClient.swift
+│   └── Configuration/
+│       ├── EnvFileLoader.swift
+│       └── AppBundleConfiguration.swift
+├── DesignSystem/DesignSystem.swift
+├── Resources/Assets.xcassets
+├── Info.plist
+└── OpenClicky.entitlements
 ```
 
-## Application and orchestration
+## App composition
 
 | Component | Primary surface | Responsibility |
 |---|---|---|
-| `OpenClickyApp` / `CompanionAppDelegate` | SwiftUI app lifecycle | Creates `CompanionManager` and `MenuBarPanelManager`; registers tooltip defaults |
-| `CompanionManager` | `start()`, onboarding and permission actions, published UI state | Central voice state machine, routing, capture, ACP streaming, modality, pointing, cancellation, and history copy |
-| `MenuBarPanelManager` | `showPanelOnLaunch()`, `togglePanel()` | `NSStatusItem`, custom panel lifecycle, placement, and outside-click dismissal |
-| `CompanionPanelView` | SwiftUI `View` | Permission setup, agent mode picker, response modality, buddy visibility, onboarding, and quit controls |
+| `App/OpenClickyApp.swift` | SwiftUI app lifecycle | Creates `CompanionManager` and `MenuBarPanelManager`; registers tooltip defaults |
+| `App/CompanionManager.swift` | `start()`, onboarding and permission actions, published UI state | Central voice state machine, routing, capture, ACP streaming, modality, pointing, cancellation, and history copy |
 
-`CompanionManager` owns the active request task. Its main pipeline method is private: `respondToTranscriptWithScreenshot(transcript:)`. The app exposes behavior through user actions and published state instead of a separate public service API.
+`CompanionManager` remains the central coordinator. Its future split should move deterministic orchestration into Core while App retains observable macOS presentation state and adapter composition.
 
-## Portable core
+## Core algorithms
 
-### `ACPAgentClient`
-
-`@MainActor final class ACPAgentClient: ObservableObject`
-
-| Member | Purpose |
-|---|---|
-| `start() async` | Locate and spawn `kiro-cli`, initialize ACP, create a session |
-| `stop()` | Tear down the process and reset connection state |
-| `sendPrompt(text:images:onTextChunk:) async throws -> String` | Send text and image blocks, stream chunks, and return accumulated text |
-| `cancelActivePrompt()` | Send ACP `session/cancel` |
-| `setAgentMode(_:) async` | Switch persona through `session/set_mode` |
-| `findAgentBinaryPath()` | Search supported CLI install paths |
-| `ensureAgentConfigInstalled()` | Create or refresh the managed agent JSON |
-| `connectionState` | `notStarted`, `launching`, `ready`, or `failed(reason:)` |
-| `availableAgentModes`, `currentAgentModeID` | Panel picker state from `session/new` |
-
-Supporting values: `ACPPromptImage`, `ACPAgentMode`, `ACPAgentConnectionState`, `ACPAgentClientError`.
-
-### `QuestionRouter`
+### `Core/Routing/QuestionRouter.swift`
 
 | Member | Purpose |
 |---|---|
@@ -71,9 +63,9 @@ Supporting values: `ACPPromptImage`, `ACPAgentMode`, `ACPAgentConnectionState`, 
 | `extractLocateTargetPhrase(from:)` | Parse a short locate request |
 | `matchScore(targetPhrase:elementTitle:)` | Score exact, containment, and word-overlap matches |
 
-`RoutableScreenElement` carries role, title, AppKit-global center point, and display frame. `RoutedResponse` is `.answerLocally(spokenText:element:)` or `.delegateToAgent`.
+`RoutableScreenElement` currently carries CoreGraphics geometry in AppKit-global coordinates. Replace that geometry with platform-neutral values before extracting a cross-platform package.
 
-### `StreamingSentenceSplitter`
+### `Core/Streaming/StreamingSentenceSplitter.swift`
 
 | Member | Purpose |
 |---|---|
@@ -82,51 +74,51 @@ Supporting values: `ACPPromptImage`, `ACPAgentMode`, `ACPAgentConnectionState`, 
 | `reset()` | Clear buffered state |
 | `textWithoutTrailingPartialTag(_:)` | Hide incomplete response tags from the text overlay |
 
-### `EnvFileLoader`
+## Features
 
-`value(forAnyOf:)` returns the first configured non-empty value across process environment and candidate `.env` files. See [Configuration](configuration.md).
-
-## Input and transcription
-
-| Component | Primary surface | Responsibility |
+| Feature | Components | Responsibility |
 |---|---|---|
-| `GlobalPushToTalkShortcutMonitor` | `start()`, `stop()`, transition publishers | Listen-only `CGEvent` tap for Control+Option and copy shortcut |
-| `BuddyDictationManager` | keyboard push-to-talk start/stop, published audio state | `AVAudioEngine`, session supersession, transcript finalization, microphone levels |
-| `BuddyTranscriptionProvider` | provider and session protocols | Backend-neutral streaming transcription surface |
-| `AppleSpeechTranscriptionProvider` | `makeStreamingSession(...)` | `SFSpeechRecognizer` implementation with on-device preference and final-result fallback |
-| `BuddyAudioConversionSupport` | PCM16 and WAV helpers | Conversion support retained for upload-style transcription providers; inactive in the Apple Speech path |
+| Voice interaction | `BuddyDictationManager`, `BuddyTranscriptionProvider` | Push-to-talk session state, microphone levels, transcript finalization, provider contract |
+| Cursor overlay | `OverlayWindow`, `CompanionResponseOverlay`, `LassoRegionSelectionController` | Buddy rendering, waveform, spinner, text bubbles, lasso, cursor flight, and pen circle |
+| Menu bar | `MenuBarPanelManager`, `CompanionPanelView` | Status item, panel lifecycle, permissions UI, agent mode, response modality, and onboarding controls |
 
-Apple Speech is the only active transcription provider. `BuddyTranscriptionProviderFactory.resolveProvider()` currently resolves Apple Speech for every plist value.
+## Platform adapters
 
-## Capture, accessibility, and routing inputs
-
-| Component | Primary surface | Responsibility |
-|---|---|---|
-| `CompanionScreenCaptureUtility` | full-screen, active-screen, and region JPEG capture | ScreenCaptureKit filters, downscaling, crop conversion, and capture metadata |
-| `AXTreeProvider` | `snapshotFrontmostApplication()` | Bounded AX walk returning routable elements and names-only agent context |
-| `LassoRegionSelectionController` | `begin()`, `end()`, `cancel()` | Consume drag events, publish stroke points, return a bounding rectangle |
-| `WindowPositionManager` | permission checks and request destinations | Accessibility and screen-recording permission flow plus display helpers |
-
-`CompanionScreenCapture` carries JPEG data, image label, cursor-screen flag, display size in points, actual screenshot size in pixels, and the AppKit-global frame represented by the image.
-
-## Response output
-
-| Component | Primary surface | Responsibility |
-|---|---|---|
-| `SentenceTTSClient` | `enqueueSentence`, `isPlaying`, `stopPlayback` | Common ordered sentence playback contract |
-| `LocalSpeechSynthesizerTTSClient` | `AVSpeechSynthesizer` implementation | On-device speech and cloud failure fallback |
-| `CloudSentenceTTSClient` | `makeDefaultTTSClient()` | Cartesia or Deepgram fetch, concurrent preparation, ordered playback, local fallback |
-| `CompanionResponseOverlayManager` | show, update, finish, hide | Cursor-following streaming text panel and auto-hide timing |
-| `OverlayWindowManager` | show/hide overlays and lasso interaction | One transparent overlay per display |
-| `BlueCursorView` | SwiftUI view in `OverlayWindow.swift` | Cursor following, waveform, spinner, text bubbles, lasso path, Bezier flight, and pen circle |
-| `PenCircleShape` | SwiftUI `Shape` | Seeded hand-drawn open-ring highlight |
-
-## Design and configuration helpers
-
-| Component | Responsibility |
+| Adapter | Responsibility |
 |---|---|
-| `DesignSystem` (`DS`) | Color, typography, spacing, radius, animation, button, hover, cursor, and tooltip primitives |
-| `AppBundleConfiguration` | Read string values from the app bundle's `Info.plist` |
+| `Platform/Accessibility/AXTreeProvider.swift` | Bounded macOS Accessibility walk returning routable elements and names-only context |
+| `Platform/ScreenCapture/CompanionScreenCaptureUtility.swift` | ScreenCaptureKit display and region JPEG capture with coordinate metadata |
+| `Platform/Speech/AppleSpeechTranscriptionProvider.swift` | On-device `SFSpeechRecognizer` transcription |
+| `Platform/Speech/LocalSpeechSynthesizerTTSClient.swift` | On-device AVSpeechSynthesizer output and cloud fallback |
+| `Platform/Speech/CloudSentenceTTSClient.swift` | Optional Cartesia or Deepgram fetch, ordered playback, and local fallback |
+| `Platform/Speech/BuddyAudioConversionSupport.swift` | PCM16 and WAV conversion support for upload-oriented providers |
+| `Platform/Shortcuts/GlobalPushToTalkShortcutMonitor.swift` | Listen-only CGEvent tap for push-to-talk and copy shortcuts |
+| `Platform/Permissions/WindowPositionManager.swift` | Accessibility and Screen Recording permission flows, settings migration, and display IDs |
+
+## Infrastructure adapters
+
+### `Infrastructure/Agent/ACPAgentClient.swift`
+
+`@MainActor final class ACPAgentClient: ObservableObject`
+
+| Member | Purpose |
+|---|---|
+| `start() async` | Locate and spawn `kiro-cli`, initialize ACP, and create a session |
+| `stop()` | Tear down the process and reset connection state |
+| `sendPrompt(text:images:onTextChunk:) async throws -> String` | Send text and image blocks, stream chunks, and return accumulated text |
+| `cancelActivePrompt()` | Send ACP `session/cancel` |
+| `setAgentMode(_:) async` | Switch persona through `session/set_mode` |
+| `ensureAgentConfigInstalled()` | Create or refresh the managed agent JSON |
+
+### Configuration
+
+- `Infrastructure/Configuration/EnvFileLoader.swift` resolves process-environment and `.env` values.
+- `Infrastructure/Configuration/AppBundleConfiguration.swift` reads app-bundle plist values.
+
+## Design and resources
+
+- `DesignSystem/DesignSystem.swift` owns color, typography, spacing, radius, animation, button, hover, cursor, and tooltip primitives.
+- `Resources/` contains the asset catalog. `Info.plist` and `OpenClicky.entitlements` stay at the target root because Xcode build settings address them directly.
 
 ## Tests
 
@@ -134,5 +126,3 @@ Apple Speech is the only active transcription provider. `BuddyTranscriptionProvi
 |---|---|
 | `OpenClickyTests/CoreLogicTests.swift` | Question routing and streaming sentence splitting |
 | `OpenClickyTests/OpenClickyTests.swift` | Permission presentation and legacy-key migration |
-
-The empty UI-test target and its generated template tests were removed.

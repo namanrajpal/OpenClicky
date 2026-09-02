@@ -1,21 +1,27 @@
-# OpenClicky App Target
+# OpenClicky macOS Target
 
-The repository-root [`AGENTS.md`](../AGENTS.md) is the single source of truth for coding conventions, architecture, build rules, and the full key-file table.
-
-Target-specific structure:
+The repository-root [`AGENTS.md`](../AGENTS.md) is the single source of truth for coding conventions and build rules. Human-facing architecture starts at [`../docs/architecture.md`](../docs/architecture.md).
 
 ```text
 OpenClicky/
-├── Core/                        Foundation-only routing, ACP, streaming, and configuration
-├── OpenClickyApp.swift          app and delegate lifecycle
-├── CompanionManager.swift      central state and request pipeline
-├── Buddy*.swift                microphone, transcription, and audio support
-├── Companion*.swift            panel, capture, and response surfaces
-├── OverlayWindow.swift         cursor buddy, lasso, pointing, and pen circle
-├── AXTreeProvider.swift        accessibility snapshot and exact local coordinates
-├── CloudSentenceTTSClient.swift
-├── LocalSpeechSynthesizerTTSClient.swift
-└── DesignSystem.swift
+├── App/                  lifecycle, composition, and observable state
+├── Core/                 platform-lean routing and streaming algorithms
+├── Features/             voice interaction, cursor overlay, and menu bar UI
+├── Platform/             macOS framework adapters
+├── Infrastructure/       ACP process and configuration adapters
+├── DesignSystem/         native visual primitives
+├── Resources/            asset catalog
+├── Info.plist             app metadata
+└── OpenClicky.entitlements signing capabilities
 ```
 
-For human-facing system documentation, start at [`../docs/README.md`](../docs/README.md). The as-built component map is [`../docs/reference/components.md`](../docs/reference/components.md).
+Dependency direction:
+
+```text
+Features -> App -> Core
+              |
+              +-> Platform
+              +-> Infrastructure
+```
+
+Core must not import SwiftUI, AppKit, ScreenCaptureKit, or AVFoundation. The current `QuestionRouter` still uses CoreGraphics geometry; remove that coupling before extracting a Windows-compatible package.

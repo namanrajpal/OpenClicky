@@ -119,28 +119,38 @@ Sentences fall back to the local voice automatically if a fetch fails.
 
 ## Project layout
 
-```
+```text
 OpenClicky/
-├── Core/                          portable core (no AppKit)
-│   ├── ACPAgentClient.swift          agent subprocess, ACP JSON-RPC, streaming
-│   ├── EnvFileLoader.swift            optional TTS configuration lookup
-│   ├── QuestionRouter.swift           on-device vs agent routing rules
-│   └── StreamingSentenceSplitter.swift  per-sentence TTS + tag holdback
-├── CompanionManager.swift         central state machine and pipeline
-├── OverlayWindow.swift            cursor buddy, pointing flight, pen circle, lasso stroke
-├── CompanionResponseOverlay.swift streaming text bubble
-├── AXTreeProvider.swift           accessibility tree extraction
-├── LassoRegionSelectionController.swift  region-select drag capture
-├── CompanionScreenCaptureUtility.swift   ScreenCaptureKit capture and crops
-├── CloudSentenceTTSClient.swift   optional Cartesia / Deepgram voices
-├── BuddyDictationManager.swift    mic pipeline and push-to-talk sessions
-└── CompanionPanelView.swift       menu bar panel UI
+├── App/                              app lifecycle and composition
+│   ├── OpenClickyApp.swift
+│   └── CompanionManager.swift
+├── Core/                             platform-lean algorithms
+│   ├── Routing/QuestionRouter.swift
+│   └── Streaming/StreamingSentenceSplitter.swift
+├── Features/                         user-facing macOS surfaces
+│   ├── VoiceInteraction/
+│   ├── CursorOverlay/
+│   └── MenuBar/
+├── Platform/                         macOS framework adapters
+│   ├── Accessibility/
+│   ├── ScreenCapture/
+│   ├── Speech/
+│   ├── Shortcuts/
+│   └── Permissions/
+├── Infrastructure/                   external process and configuration adapters
+│   ├── Agent/ACPAgentClient.swift
+│   └── Configuration/
+├── DesignSystem/
+├── Resources/                         asset catalog
+├── Info.plist                          app metadata and permission copy
+└── OpenClicky.entitlements             signing capabilities
 ```
 
 More depth:
 
 - [`docs/README.md`](docs/README.md): documentation map and reading paths
 - [`docs/setup.md`](docs/setup.md): development setup and first-run checks
+- [`docs/permissions.md`](docs/permissions.md): why the app asks for each macOS permission, in plain language
 - [`docs/architecture.md`](docs/architecture.md): as-built architecture and data flow
 - [`docs/reference/components.md`](docs/reference/components.md): component and internal API map
 - [`docs/reference/configuration.md`](docs/reference/configuration.md): runtime configuration
@@ -155,6 +165,27 @@ for a submitted hotkey interaction, covers the active display or lasso region,
 and is handed to the local `kiro-cli` process. The CLI uses its own configured
 model provider. The app has no analytics or auto-updater. Optional cloud TTS
 sends completed response sentences only when you configure provider keys.
+
+## FAQ
+
+**Why does macOS warn that OpenClicky is "requesting to bypass the system
+private window picker and directly access your screen and audio"?**
+
+Because OpenClicky takes its screenshot instantly and silently when you
+release the hotkey instead of showing the system's share-a-window picker
+each time. Apps like Zoom either show you that picker or hold a special
+Apple approval, so they don't trigger the warning. The prompt is macOS
+keeping you informed, clicking Allow is expected, and it re-appears
+periodically by Apple's policy. Full plain-language explanation of this
+warning and all four permissions: [Why OpenClicky asks for these
+permissions](docs/permissions.md).
+
+**Why does it need Screen Recording if it doesn't record video?**
+
+macOS puts single screenshots and continuous recording under the same
+permission label. OpenClicky only takes one screenshot per question,
+covering the active display or your lassoed region. See
+[docs/permissions.md](docs/permissions.md).
 
 ## License
 

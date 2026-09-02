@@ -72,10 +72,10 @@ Agent text arrives in small chunks. `StreamingSentenceSplitter.textWithoutTraili
 
 ## Parser ownership
 
-- Agent emission instructions: `Core/ACPAgentClient.swift`, `agentPrompt`.
-- Streaming holdback: `Core/StreamingSentenceSplitter.swift`.
-- Final parse and coordinate mapping: `CompanionManager.swift`, `parsePointingCoordinates(from:)` and `respondToTranscriptWithScreenshot(transcript:)`.
-- Rendering: `OverlayWindow.swift`, `BlueCursorView` and `PenCircleShape`.
+- Agent emission instructions: `Infrastructure/Agent/ACPAgentClient.swift`, `agentPrompt`.
+- Streaming holdback: `Core/Streaming/StreamingSentenceSplitter.swift`.
+- Final parse and coordinate mapping: `App/CompanionManager.swift`, `parsePointingCoordinates(from:)` and `respondToTranscriptWithScreenshot(transcript:)`.
+- Rendering: `Features/CursorOverlay/OverlayWindow.swift`, `BlueCursorView` and `PenCircleShape`.
 
 ## Planned extensions
 

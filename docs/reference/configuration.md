@@ -4,7 +4,7 @@ OpenClicky uses four configuration sources: Xcode build settings, `Info.plist`, 
 
 ## Environment lookup
 
-`Core/EnvFileLoader.swift` searches in this order:
+`Infrastructure/Configuration/EnvFileLoader.swift` searches in this order:
 
 1. The process environment.
 2. The file named by `OPENCLICKY_ENV_PATH`.
